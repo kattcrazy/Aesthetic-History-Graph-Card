@@ -286,8 +286,28 @@ function editorStoredOptionOn(raw) {
   return s !== '' && s !== 'off';
 }
 
-function editorHexLooksLikeSwatch(str) {
-  return !!(str != null && /^#[0-9A-Fa-f]{3,8}$/.test(String(str).trim()));
+/** Hex `#rgb` / `#rrggbb` / `#rrggbbaa` → CSS colour for preview swatch; `var()` etc. → empty. */
+function editorColorSwatchBackground(str) {
+  const s = str == null ? '' : String(str).trim();
+  if (!s) return '';
+  if (/^#[0-9A-Fa-f]{8}$/i.test(s)) return s;
+  if (/^#[0-9A-Fa-f]{6}$/i.test(s)) return s;
+  if (/^#[0-9A-Fa-f]{3}$/i.test(s)) {
+    const h = s.slice(1);
+    return `#${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}`;
+  }
+  return '';
+}
+
+/** `#rrggbb` for `<input type="color">`; supports shorthand `#rgb`. Omit `#rrggbbaa` (alpha). */
+function editorHex6ForColorInput(str) {
+  const s = str == null ? '' : String(str).trim();
+  if (/^#[0-9A-Fa-f]{6}$/i.test(s)) return `#${s.slice(1).toLowerCase()}`;
+  if (/^#[0-9A-Fa-f]{3}$/i.test(s)) {
+    const h = s.slice(1);
+    return `#${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}`.toLowerCase();
+  }
+  return null;
 }
 
 function collectTemplatesDeep(cfg, prefix = '') {
@@ -1617,13 +1637,14 @@ class AestheticHistoryGraphCardEditor extends LitElement {
 
         <div class="section">
           <div class="section-header">Entities</div>
-          <div class="option-help">Options support Jinja templates where noted in the README.</div>
+          <div class="option-help">Add entities with numeric state. Recorder history is plotted over the card time range. Any option (including entity, name, color) accepts Jinja templates.</div>
           ${entities.map((ent, i) => {
             const expanded = this._expandedEntities[i] ?? isTemplate(ent.entity);
             const rows = (ent.entity || '').split('\n').length;
             const th = ent.color_threshold || [];
             const colorVal = ent.color ?? '';
-            const showEntityColorSwatch = editorHexLooksLikeSwatch(colorVal);
+            const entitySwatchBg = editorColorSwatchBackground(colorVal);
+            const entityHex6 = editorHex6ForColorInput(colorVal);
             return html`
               <div class="entity-row">
                 <div class="entity-fields">
@@ -1660,8 +1681,17 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                       @input=${(e) => this._entityChanged(i, 'name', e.target.value || undefined)}
                     />
                     <div class="color-with-swatch">
-                      ${showEntityColorSwatch
-                        ? html`<span class="color-swatch" style="background:${colorVal.trim()}"></span>`
+                      <span
+                        class="color-swatch ${entitySwatchBg ? '' : 'color-swatch-empty'}"
+                        style="${entitySwatchBg ? `background:${entitySwatchBg}` : ''}"
+                      ></span>
+                      ${entityHex6
+                        ? html`<input
+                            type="color"
+                            class="editor-color-native"
+                            .value=${entityHex6}
+                            @input=${(e) => this._entityChanged(i, 'color', e.target.value)}
+                          />`
                         : nothing}
                       <input
                         type="text"
@@ -1686,14 +1716,11 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                     <label class="option-label">Fill</label>
                     <select
                       class="select flex1"
-                      .value=${typeof ent.fill === 'boolean' ? (ent.fill ? 'true' : 'false') : ent.fill ?? 'false'}
-                      @change=${(e) => {
-                        const v = e.target.value;
-                        this._entityChanged(i, 'fill', v === 'true' ? true : v === 'false' ? false : v);
-                      }}
+                      .value=${normalizeFillMode(ent.fill)}
+                      @change=${(e) => this._entityChanged(i, 'fill', e.target.value)}
                     >
-                      <option value="false">None</option>
-                      <option value="true">Solid</option>
+                      <option value="none">None</option>
+                      <option value="solid">Solid</option>
                       <option value="gradient_up">Gradient up</option>
                       <option value="gradient_down">Gradient down</option>
                       <option value="gradient_left">Gradient left</option>
@@ -1704,7 +1731,7 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                       class="input narrow"
                       min="0"
                       max="100"
-                      placeholder="Opacity"
+                      placeholder="opacity"
                       .value=${ent.fill_opacity ?? ''}
                       @input=${(e) => {
                         const v = e.target.value;
@@ -1726,7 +1753,8 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                   <div class="threshold-block">
                     ${th.map((row, ti) => {
                       const thColor = row.color ?? '';
-                      const showThSwatch = editorHexLooksLikeSwatch(thColor);
+                      const thSwatchBg = editorColorSwatchBackground(thColor);
+                      const thHex6 = editorHex6ForColorInput(thColor);
                       return html`
                         <div class="threshold-row">
                           <input
@@ -1736,15 +1764,25 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                             @input=${(e) => this._thresholdChanged(i, ti, 'value', parseFloat(e.target.value) || 0)}
                           />
                           <div class="color-with-swatch threshold-color-wrap">
-                            ${showThSwatch
-                              ? html`<span class="color-swatch" style="background:${thColor.trim()}"></span>`
+                            <span
+                              class="color-swatch ${thSwatchBg ? '' : 'color-swatch-empty'}"
+                              style="${thSwatchBg ? `background:${thSwatchBg}` : ''}"
+                            ></span>
+                            ${thHex6
+                              ? html`<input
+                                  type="color"
+                                  class="editor-color-native"
+                                  .value=${thHex6}
+                                  @input=${(e) => this._thresholdChanged(i, ti, 'color', e.target.value)}
+                                />`
                               : nothing}
                             <input
                               type="text"
                               class="input color-input threshold-color-input"
-                              placeholder="Hex or CSS variable"
+                              placeholder="Color (hex or var)"
                               .value=${thColor}
-                              @input=${(e) => this._thresholdChanged(i, ti, 'color', e.target.value)}
+                              @input=${(e) =>
+                                this._thresholdChanged(i, ti, 'color', e.target.value.trim() || undefined)}
                             />
                           </div>
                           <button type="button" class="remove-btn" @click=${() => this._removeThreshold(i, ti)}>
@@ -1753,7 +1791,9 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                         </div>
                       `;
                     })}
-                    <button type="button" class="add-threshold" @click=${() => this._addThreshold(i)}>Add threshold</button>
+                    <button type="button" class="add-threshold" @click=${() => this._addThreshold(i)}>
+                      Add colour threshold
+                    </button>
                   </div>
                 </div>
                 <button type="button" class="remove-btn" @click=${() => this._removeEntity(i)}>
@@ -1973,6 +2013,20 @@ class AestheticHistoryGraphCardEditor extends LitElement {
       flex-shrink: 0;
       border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.2));
     }
+    .color-swatch-empty {
+      background: var(--disabled-color, rgba(127, 127, 127, 0.35));
+    }
+    .editor-color-native {
+      width: 48px;
+      height: 40px;
+      padding: 2px;
+      border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.12));
+      border-radius: 10px;
+      cursor: pointer;
+      flex-shrink: 0;
+      box-sizing: border-box;
+      background: var(--card-background-color, transparent);
+    }
     .entity-options-row .color-input {
       min-width: 80px;
       max-width: 120px;
@@ -2036,9 +2090,10 @@ class AestheticHistoryGraphCardEditor extends LitElement {
     .threshold-row .input.narrow {
       flex-shrink: 0;
     }
-    .threshold-row .input:not(.narrow) {
+    /* Only stretch the text colour field — do not target type="color" (breaks preview picker layout). */
+    .threshold-row .threshold-color-input {
       flex: 1;
-      min-width: 120px;
+      min-width: 80px;
     }
     .add-threshold {
       display: flex;

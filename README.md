@@ -59,7 +59,7 @@ All options support Jinja templates (strings containing `{{ }}`).
 | `color_threshold` | array | — | List of `{ value, color }` for stepped colouring by numeric state along the series |
 | `color_threshold_smoothing` | number | `0` | Softness between threshold colours on stroke and fill (`0` = hard steps, `10` = very soft) |
 | `entity` | string | required | Entity ID or Jinja template |
-| `fill` | `false`, `true`, `gradient_up`, `gradient_down`, `gradient_left`, `gradient_right` | `false` | Area fill |
+| `fill` | `none`, `solid`, `gradient_up`, `gradient_down`, `gradient_left`, `gradient_right` | `none` | Area fill (YAML booleans `true` / `false` still work as Solid / None) |
 | `fill_opacity` | number | `40` | Fill opacity from `0` to `100` |
 | `line_width` | number | `2` | Line thickness (px) |
 | `name` | string | — | Override name; omit to use friendly name |
@@ -100,7 +100,7 @@ entities:
   - entity: sensor.solar_power
     name: Solar
     color: '#FFE08A'
-    fill: true
+    fill: solid
     fill_opacity: 50
     color_threshold:
       - value: 0
