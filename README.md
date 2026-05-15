@@ -1,4 +1,4 @@
-# History Graph Card
+# Aesthetic History Graph Card
 
 A time-series history chart with configurable colours, fills, thresholds, and grid lines.
 
@@ -12,7 +12,7 @@ All of my (@kattcrazy)'s cards are styled similarly and support Jinja in most, i
 2. Add this repo
    - Repository: `https://github.com/kattcrazy/History-Graph-Card`
    - Type : `Dashboard`
-3. Search for History Graph Card and Download
+3. Search for Aesthetic History Graph Card and Download
 
 ### Manual
 
@@ -38,6 +38,7 @@ All options support Jinja templates (strings containing `{{ }}`).
 | `entities` | array | `[]` | Entity list (see below) |
 | `legend_position` | `top`, `bottom` | `bottom` | Legend placement |
 | `show_legend` | boolean | `true` | Show legend |
+| `show_legend_state` | boolean | `true` | Show current value and unit in legend entries |
 | `show_title` | boolean | `true` | Show title |
 | `smoothing` | number | `0` | Path smoothing from `0` (straight segments) to `10` (strongest curve) |
 | `time_lines` | `off` or `dd:hh:mm` | `off` | Vertical time guides|
@@ -58,13 +59,14 @@ All options support Jinja templates (strings containing `{{ }}`).
 | `fill_opacity` | number | `40` | Fill opacity from `0` to `100` |
 | `line_width` | number | `2` | Line thickness (px) |
 | `name` | string | — | Override name; omit to use friendly name |
+| `show_legend_state` | boolean | card default | Per-series override for legend current value |
 
 ### Full config & options
 
 For your copy-paste convenience!
 
 ```yaml
-type: custom:history-graph-card
+type: custom:aesthetic-history-graph-card
 
 alignment: left/center/right
 show_title: true/false
@@ -72,6 +74,7 @@ title: Power
 title_position: top/bottom
 
 show_legend: true/false
+show_legend_state: true/false
 legend_position: top/bottom
 
 time_range: 07:00:00          # dd:hh:mm — last 7 days
@@ -99,13 +102,6 @@ entities:
         color: '#FF9800'
     color_threshold_smoothing: 3
 ```
-
-## Examples
-
-### Power
-
-```yaml
-
 
 ## License
 

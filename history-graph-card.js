@@ -1,5 +1,5 @@
 /**
- * History Graph Card for Home Assistant Lovelace.
+ * Aesthetic History Graph Card for Home Assistant Lovelace (v1.1.0).
  *
  * Multi-series time charts from recorder history with configurable styling,
  * thresholds, grid lines, and Jinja-templated options.
@@ -42,6 +42,43 @@ function parseNumericState(state) {
   if (typeof state === 'number' && !Number.isNaN(state)) return state;
   const n = parseFloat(String(state).replace(/[^\d.-]/g, ''));
   return Number.isNaN(n) ? null : n;
+}
+
+/** Recorder history/period response: `[[states…]]` or a flat state list. */
+function historyStatesFromApi(data, entityId) {
+  if (!Array.isArray(data) || !data.length) return [];
+  if (Array.isArray(data[0])) {
+    if (entityId && data.length > 1) {
+      const match = data.find(
+        (row) => Array.isArray(row) && row.length && String(row[0]?.entity_id) === String(entityId)
+      );
+      if (match) return match;
+    }
+    return data[0] || [];
+  }
+  if (data[0] && typeof data[0] === 'object' && data[0].entity_id) return data;
+  return [];
+}
+
+function statesToPoints(states) {
+  const pts = [];
+  for (const st of states) {
+    if (!st || st.state == null) continue;
+    const t = new Date(st.last_changed || st.last_updated).getTime();
+    const v = parseNumericState(st.state);
+    if (v != null && !Number.isNaN(t)) pts.push({ t, v });
+  }
+  return pts;
+}
+
+/** Duplicate a lone point so a line can render. */
+function ensureMinChartPoints(pts, min = 2) {
+  if (pts.length >= min) return pts;
+  if (pts.length === 1) {
+    const p = pts[0];
+    return [{ t: p.t - 60000, v: p.v }, p];
+  }
+  return pts;
 }
 
 function partsInTimeZone(ms, timeZone) {
@@ -243,7 +280,7 @@ function collectTemplatesDeep(cfg, prefix = '') {
 }
 
 /** Lovelace card: fetches recorder history and renders an SVG time-series chart. */
-class HistoryGraphCard extends LitElement {
+class AestheticHistoryGraphCard extends LitElement {
   static properties = {
     hass: { type: Object, attribute: false },
     _config: { type: Object, state: true },
@@ -272,23 +309,32 @@ class HistoryGraphCard extends LitElement {
   }
 
   static getConfigElement() {
-    return document.createElement('history-graph-card-editor');
+    return document.createElement('aesthetic-history-graph-card-editor');
   }
 
   static getStubConfig() {
     return {
+      type: 'custom:aesthetic-history-graph-card',
       alignment: 'left',
       entities: [],
       legend_position: 'bottom',
       show_legend: true,
+      show_legend_state: true,
       show_title: true,
       smoothing: 0,
       time_lines: 'off',
       time_range: '07:00:00',
       title_position: 'top',
-      type: 'custom:history-graph-card',
       value_lines: 'off',
     };
+  }
+
+  _legendShowsState(row) {
+    const perEntity = this._resolve(`entities.${row._cfgIdx}.show_legend_state`);
+    if (perEntity !== undefined && perEntity !== null && perEntity !== '') {
+      return perEntity !== false && perEntity !== 'false';
+    }
+    return this._resolve('show_legend_state') !== false;
   }
 
   setConfig(config) {
@@ -425,6 +471,11 @@ class HistoryGraphCard extends LitElement {
     if (!cfg?.entities?.length || !hass) return [];
     return cfg.entities.map((ent, cfgIdx) => {
       if (!ent) return null;
+      if (typeof ent === 'string') {
+        const id = ent.trim();
+        if (!id) return null;
+        return { entity: id, _entityId: id, _cfgIdx: cfgIdx };
+      }
       const rawEntity = ent.entity;
       if (isTemplate(rawEntity)) {
         const resolved = this._templateResults[`entities.${cfgIdx}.entity`];
@@ -470,19 +521,11 @@ class HistoryGraphCard extends LitElement {
         rows.map(async (row) => {
           const id = row._entityId;
           try {
-            const data = await hass.callApi('GET', `history/period/${encodeURIComponent(startIso)}`, {
-              end_time: endIso,
-              filter_entity_id: id,
-              minimal_response: true,
-            });
-            const arr = Array.isArray(data) && Array.isArray(data[0]) ? data[0] : [];
-            const pts = [];
-            for (const st of arr) {
-              const t = new Date(st.last_changed || st.last_updated).getTime();
-              const v = parseNumericState(st.state);
-              if (v != null && !Number.isNaN(t)) pts.push({ t, v });
-            }
-            next[id] = pts;
+            const url =
+              `history/period/${startIso}?filter_entity_id=${encodeURIComponent(id)}` +
+              `&end_time=${encodeURIComponent(endIso)}&minimal_response&no_attributes`;
+            const data = await hass.callApi('GET', url);
+            next[id] = statesToPoints(historyStatesFromApi(data, id));
           } catch (e) {
             next[id] = [];
           }
@@ -552,7 +595,7 @@ class HistoryGraphCard extends LitElement {
     const hist = this._historyByEntity || {};
     return rows.some((row) => {
       const pts = (hist[row._entityId] || []).filter((p) => p.t >= tmin && p.t <= tmax);
-      return pts.length >= 2;
+      return pts.length >= 1;
     });
   }
 
@@ -565,6 +608,15 @@ class HistoryGraphCard extends LitElement {
 
   render() {
     if (!this._config) return nothing;
+    if (!this.hass) {
+      return html`
+        <ha-card>
+          <div class="card-content empty">
+            <span class="empty-text">Aesthetic History Graph Card</span>
+          </div>
+        </ha-card>
+      `;
+    }
     return html`<ha-card>${this._renderCardInner()}</ha-card>`;
   }
 
@@ -625,7 +677,9 @@ class HistoryGraphCard extends LitElement {
             this._resolve(`entities.${row._cfgIdx}.color`) || DEFAULT_COLORS[i % DEFAULT_COLORS.length];
           const unit = this.hass?.states?.[id]?.attributes?.unit_of_measurement || '';
           const valStr = last != null ? String(Math.round(last * 1000) / 1000) : '—';
-          const text = `${name}: ${valStr}${unit ? ` ${unit}` : ''}`;
+          const text = this._legendShowsState(row)
+            ? `${name}: ${valStr}${unit ? ` ${unit}` : ''}`
+            : name;
           return html`
             <div class="legend-item">
               <span class="legend-swatch" style="background:${color};border-radius:3px"></span>
@@ -690,7 +744,8 @@ class HistoryGraphCard extends LitElement {
     rows.forEach((row, seriesIdx) => {
       const idx = row._cfgIdx;
       const id = row._entityId;
-      const pts = (this._historyByEntity[id] || []).filter((p) => p.t >= tmin && p.t <= tmax);
+      let pts = (this._historyByEntity[id] || []).filter((p) => p.t >= tmin && p.t <= tmax);
+      pts = ensureMinChartPoints(pts);
       if (pts.length < 2) return;
 
       const baseColor =
@@ -1006,12 +1061,12 @@ class HistoryGraphCard extends LitElement {
   `;
 }
 
-if (!customElements.get('history-graph-card')) {
-  customElements.define('history-graph-card', HistoryGraphCard);
+if (!customElements.get('aesthetic-history-graph-card')) {
+  customElements.define('aesthetic-history-graph-card', AestheticHistoryGraphCard);
 }
 
-/** Lovelace visual editor for History Graph Card. */
-class HistoryGraphCardEditor extends LitElement {
+/** Lovelace visual editor for Aesthetic History Graph Card. */
+class AestheticHistoryGraphCardEditor extends LitElement {
   static properties = {
     hass: { type: Object, attribute: false },
     lovelace: { type: Object, attribute: false },
@@ -1557,23 +1612,24 @@ class HistoryGraphCardEditor extends LitElement {
   `;
 }
 
-if (!customElements.get('history-graph-card-editor')) {
-  customElements.define('history-graph-card-editor', HistoryGraphCardEditor);
+if (!customElements.get('aesthetic-history-graph-card-editor')) {
+  customElements.define('aesthetic-history-graph-card-editor', AestheticHistoryGraphCardEditor);
 }
 
-const HISTORY_GRAPH_CARD_TYPE = 'custom:history-graph-card';
-const HISTORY_GRAPH_CARD_PICKER = {
+const AESTHETIC_HISTORY_GRAPH_CARD_TYPE = 'custom:aesthetic-history-graph-card';
+const AESTHETIC_HISTORY_GRAPH_CARD_PICKER = {
+  type: AESTHETIC_HISTORY_GRAPH_CARD_TYPE,
+  name: 'Aesthetic History Graph Card',
+  preview: false,
   description:
     'Time-series history chart for numeric entities with custom colours, fills, thresholds, and grid lines.',
-  name: 'History Graph Card',
-  preview: false,
-  type: HISTORY_GRAPH_CARD_TYPE,
+  documentationURL: 'https://github.com/kattcrazy/History-Graph-Card',
 };
 
 if (window.customCards && Array.isArray(window.customCards)) {
-  if (!window.customCards.some((c) => c.type === HISTORY_GRAPH_CARD_TYPE)) {
-    window.customCards.push(HISTORY_GRAPH_CARD_PICKER);
+  if (!window.customCards.some((c) => c.type === AESTHETIC_HISTORY_GRAPH_CARD_TYPE)) {
+    window.customCards.push(AESTHETIC_HISTORY_GRAPH_CARD_PICKER);
   }
 } else if (window.registerCustomCard) {
-  window.registerCustomCard(HISTORY_GRAPH_CARD_PICKER);
+  window.registerCustomCard(AESTHETIC_HISTORY_GRAPH_CARD_PICKER);
 }
