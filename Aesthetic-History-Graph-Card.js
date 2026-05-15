@@ -271,12 +271,11 @@ function smoothPointsToPathD(points, smooth10) {
 }
 
 function normalizeFillMode(raw) {
-  if (raw === true || raw === 'true') return 'solid';
-  if (raw === false || raw === 'false' || raw == null || raw === '') return 'none';
+  if (raw == null || raw === '') return 'none';
   const s = String(raw).trim().toLowerCase().replace(/ /g, '_');
-  if (s === 'true') return 'solid';
-  if (s === 'false' || s === 'none') return 'none';
-  if (['gradient_up', 'gradient_down', 'gradient_left', 'gradient_right', 'solid'].includes(s)) return s === 'solid' ? 'solid' : s;
+  if (s === 'none') return 'none';
+  if (s === 'solid') return 'solid';
+  if (['gradient_up', 'gradient_down', 'gradient_left', 'gradient_right'].includes(s)) return s;
   return 'none';
 }
 
@@ -297,17 +296,6 @@ function editorColorSwatchBackground(str) {
     return `#${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}`;
   }
   return '';
-}
-
-/** `#rrggbb` for `<input type="color">`; supports shorthand `#rgb`. Omit `#rrggbbaa` (alpha). */
-function editorHex6ForColorInput(str) {
-  const s = str == null ? '' : String(str).trim();
-  if (/^#[0-9A-Fa-f]{6}$/i.test(s)) return `#${s.slice(1).toLowerCase()}`;
-  if (/^#[0-9A-Fa-f]{3}$/i.test(s)) {
-    const h = s.slice(1);
-    return `#${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}`.toLowerCase();
-  }
-  return null;
 }
 
 function collectTemplatesDeep(cfg, prefix = '') {
@@ -418,12 +406,12 @@ class AestheticHistoryGraphCard extends LitElement {
     return u != null && String(u).trim() !== '' ? String(u).trim() : '';
   }
 
-  /** Legend swatch corner radius (px); chart SVG unchanged. */
+  /** Legend swatch corner radius (px), or `null` to use theme `--ha-card-border-radius`. */
   _resolvedLegendSwatchRadiusPx() {
     const raw = this._resolve('legend_radius');
-    if (raw == null || raw === '') return 3;
+    if (raw == null || raw === '') return null;
     const n = parseFloat(String(raw).replace(/[^\d.-]/g, ''));
-    if (!Number.isFinite(n)) return 3;
+    if (!Number.isFinite(n)) return null;
     return clamp(Math.round(n), 0, 24);
   }
 
@@ -753,6 +741,8 @@ class AestheticHistoryGraphCard extends LitElement {
     const justify =
       alignment === 'center' ? 'center' : alignment === 'right' ? 'flex-end' : 'flex-start';
     const swatchRadiusPx = this._resolvedLegendSwatchRadiusPx();
+    const swatchRadiusStyle =
+      swatchRadiusPx != null ? `border-radius:${swatchRadiusPx}px` : '';
     return html`
       <div class="legend" style="justify-content:${justify}">
         ${rows.map((row, i) => {
@@ -778,7 +768,10 @@ class AestheticHistoryGraphCard extends LitElement {
           }
           return html`
             <div class="legend-item">
-              <span class="legend-swatch" style="background:${color};border-radius:${swatchRadiusPx}px"></span>
+              <span
+                class="legend-swatch"
+                style="background:${color};${swatchRadiusStyle}"
+              ></span>
               <span class="legend-label">${text}</span>
             </div>
           `;
@@ -1161,7 +1154,7 @@ class AestheticHistoryGraphCard extends LitElement {
     .legend-swatch {
       width: 12px;
       height: 12px;
-      border-radius: 3px;
+      border-radius: var(--ha-card-border-radius, 12px);
       flex-shrink: 0;
     }
     .legend-label {
@@ -1435,14 +1428,14 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                         </select>
                       </div>
                       <div class="option-row">
-                        <label class="option-label">Radius (px)</label>
+                        <label class="option-label">Swatch radius (px)</label>
                         <input
                           type="number"
                           class="input narrow"
                           min="0"
                           max="24"
                           .value=${c.legend_radius != null && c.legend_radius !== '' ? c.legend_radius : ''}
-                          placeholder="3"
+                          placeholder="Theme card radius"
                           @input=${(e) => {
                             const v = e.target.value.trim();
                             this._valueChanged('legend_radius', v === '' ? undefined : parseInt(v, 10) || 0);
@@ -1644,7 +1637,6 @@ class AestheticHistoryGraphCardEditor extends LitElement {
             const th = ent.color_threshold || [];
             const colorVal = ent.color ?? '';
             const entitySwatchBg = editorColorSwatchBackground(colorVal);
-            const entityHex6 = editorHex6ForColorInput(colorVal);
             return html`
               <div class="entity-row">
                 <div class="entity-fields">
@@ -1685,14 +1677,6 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                         class="color-swatch ${entitySwatchBg ? '' : 'color-swatch-empty'}"
                         style="${entitySwatchBg ? `background:${entitySwatchBg}` : ''}"
                       ></span>
-                      ${entityHex6
-                        ? html`<input
-                            type="color"
-                            class="editor-color-native"
-                            .value=${entityHex6}
-                            @input=${(e) => this._entityChanged(i, 'color', e.target.value)}
-                          />`
-                        : nothing}
                       <input
                         type="text"
                         class="input color-input"
@@ -1754,7 +1738,6 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                     ${th.map((row, ti) => {
                       const thColor = row.color ?? '';
                       const thSwatchBg = editorColorSwatchBackground(thColor);
-                      const thHex6 = editorHex6ForColorInput(thColor);
                       return html`
                         <div class="threshold-row">
                           <input
@@ -1768,14 +1751,6 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                               class="color-swatch ${thSwatchBg ? '' : 'color-swatch-empty'}"
                               style="${thSwatchBg ? `background:${thSwatchBg}` : ''}"
                             ></span>
-                            ${thHex6
-                              ? html`<input
-                                  type="color"
-                                  class="editor-color-native"
-                                  .value=${thHex6}
-                                  @input=${(e) => this._thresholdChanged(i, ti, 'color', e.target.value)}
-                                />`
-                              : nothing}
                             <input
                               type="text"
                               class="input color-input threshold-color-input"
@@ -1797,7 +1772,7 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                   </div>
                 </div>
                 <button type="button" class="remove-btn" @click=${() => this._removeEntity(i)}>
-                  <ha-icon icon="mdi:close"></ha-icon>
+                  <ha-icon icon="mdi:delete"></ha-icon>
                 </button>
               </div>
             `;
@@ -2016,17 +1991,6 @@ class AestheticHistoryGraphCardEditor extends LitElement {
     .color-swatch-empty {
       background: var(--disabled-color, rgba(127, 127, 127, 0.35));
     }
-    .editor-color-native {
-      width: 48px;
-      height: 40px;
-      padding: 2px;
-      border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.12));
-      border-radius: 10px;
-      cursor: pointer;
-      flex-shrink: 0;
-      box-sizing: border-box;
-      background: var(--card-background-color, transparent);
-    }
     .entity-options-row .color-input {
       min-width: 80px;
       max-width: 120px;
@@ -2090,7 +2054,7 @@ class AestheticHistoryGraphCardEditor extends LitElement {
     .threshold-row .input.narrow {
       flex-shrink: 0;
     }
-    /* Only stretch the text colour field — do not target type="color" (breaks preview picker layout). */
+    /* Only stretch the text colour field. */
     .threshold-row .threshold-color-input {
       flex: 1;
       min-width: 80px;

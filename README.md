@@ -37,17 +37,17 @@ All options support Jinja templates (strings containing `{{ }}`).
 | `alignment` | `left`, `center`, `right` | `left` | Horizontal alignment for title and legend |
 | `entities` | array | `[]` | Entity list (see below) |
 | `legend_position` | `top`, `bottom` | `bottom` | Legend placement |
-| `legend_radius` | number | `3` | Radius of legend colour swatches |
+| `legend_radius` | number | — | Radius of legend colour swatches (px); omit to match theme card radius (`--ha-card-border-radius`) |
 | `show_legend` | boolean | `true` | Show legend |
 | `show_state` | boolean | `true` | Show the current numeric value in the legend |
 | `show_title` | boolean | `true` | Show title |
 | `show_unit` | boolean | `false` | Show the unit next to the value in the legend (only when `show_state` is true) |
 | `unit_source` | `automatic`, `custom` | `automatic` | Can be automatic or custom text |
-| `unit_custom` | string | — | When `unit_source` is `custom` |
+| `unit_custom` | string | - | When `unit_source` is `custom` |
 | `smoothing` | number | `0` | Path smoothing from `0` (straight segments) to `10` (strongest curve) |
 | `time_lines` | `off` or `dd:hh:mm` | `off` | Vertical time guides (for example `00:01:00` would mean a line every 1 hour ) |
 | `time_range` | string `dd:hh:mm` | `07:00:00` | History window |
-| `title` | string | — | Card title text |
+| `title` | string | - | Card title text |
 | `title_position` | `top`, `bottom` | `top` | Title placement |
 | `value_lines` | `off` or number | `off` | Horizontal guides at that numeric interval (for example `500` would mean lines at 0, 500, 1000, …) |
 
@@ -59,7 +59,7 @@ All options support Jinja templates (strings containing `{{ }}`).
 | `color_threshold` | array | — | List of `{ value, color }` for stepped colouring by numeric state along the series |
 | `color_threshold_smoothing` | number | `0` | Softness between threshold colours on stroke and fill (`0` = hard steps, `10` = very soft) |
 | `entity` | string | required | Entity ID or Jinja template |
-| `fill` | `none`, `solid`, `gradient_up`, `gradient_down`, `gradient_left`, `gradient_right` | `none` | Area fill (YAML booleans `true` / `false` still work as Solid / None) |
+| `fill` | `none`, `solid`, `gradient_up`, `gradient_down`, `gradient_left`, `gradient_right` | `none` | Area fill |
 | `fill_opacity` | number | `40` | Fill opacity from `0` to `100` |
 | `line_width` | number | `2` | Line thickness (px) |
 | `name` | string | — | Override name; omit to use friendly name |
@@ -67,47 +67,47 @@ All options support Jinja templates (strings containing `{{ }}`).
 
 ### Full config & options
 
-For your copy-paste convenience!
+Reference listing of **every** card and entity key (valid YAML). Drop keys you do not need; defaults match the tables above.
 
 ```yaml
 type: custom:aesthetic-history-graph-card
 
-alignment: left/center/right
-show_title: true/false
-title: Power
-title_position: top/bottom
+# --- Card ---
+alignment: left                       # left | center | right
+show_title: true
+title: ''                             # optional
+title_position: top                   # top | bottom
 
-show_legend: true/false
+show_legend: true
 show_state: true
-show_unit: true
-unit_source: automatic
-legend_position: top/bottom
-# legend_radius: 6              # optional — px, legend swatches only (default 3)
+show_unit: false                      # ignored when show_state is false
+unit_source: automatic                # automatic | custom
+unit_custom: ''                       # used when unit_source is custom
 
-time_range: 07:00:00          # dd:hh:mm — last 7 days
-time_lines: off                 # off or dd:hh:mm (midnight-aligned)
-value_lines: off                # off or number (e.g. 500)
+legend_position: bottom               # top | bottom
+legend_radius: 6                      # px 0–24; omit key to use theme card radius (--ha-card-border-radius)
 
-smoothing: 0                    # 0–10
+time_range: '07:00:00'                # dd:hh:mm
+time_lines: off                       # off | dd:hh:mm
+value_lines: off                      # off | number (step)
+
+smoothing: 0                          # 0–10
 
 entities:
-  - entity: sensor.grid_power   # Or use Jinja templating
-    name: Grid
-    color: '#93B5F2'
+  # --- Entity (repeat per series) ---
+  - entity: sensor.example            # entity id or Jinja
+    name: ''                          # optional; omit for friendly name
+    color: ''                         # optional hex, CSS var, or Jinja
     line_width: 2
-    fill: gradient_down
-    fill_opacity: 35
-  - entity: sensor.solar_power
-    name: Solar
-    color: '#FFE08A'
-    fill: solid
-    fill_opacity: 50
-    color_threshold:
+    fill: none                        # none | solid | gradient_up | gradient_down | gradient_left | gradient_right
+    fill_opacity: 40                  # 0–100
+    show_state: true                  # optional; overrides card show_state
+    color_threshold_smoothing: 0      # 0–10
+    color_threshold:                  # optional; stepped colours by value along the series
       - value: 0
         color: '#FFD54F'
-      - value: 2000
+      - value: 1000
         color: '#FF9800'
-    color_threshold_smoothing: 3
 ```
 
 ## License
