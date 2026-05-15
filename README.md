@@ -1,6 +1,6 @@
 # History Graph Card
 
-A time-series history chart for numeric entities with configurable colours, fills, thresholds, and grid lines.
+A time-series history chart with configurable colours, fills, thresholds, and grid lines.
 
 All of my (@kattcrazy)'s cards are styled similarly and support Jinja in most, if not all option fields.
 
@@ -11,7 +11,7 @@ All of my (@kattcrazy)'s cards are styled similarly and support Jinja in most, i
 1. Open HACS and open the 3-dot menu (top right). Select Custom repositories.
 2. Add this repo
    - Repository: `https://github.com/kattcrazy/History-Graph-Card`
-   - Category: `Plugin`
+   - Type : `Dashboard`
 3. Search for History Graph Card and Download
 
 ### Manual
@@ -56,8 +56,8 @@ All options support Jinja templates (strings containing `{{ }}`).
 | `entity` | string | required | Entity ID or Jinja template |
 | `fill` | `false`, `true`, `gradient_up`, `gradient_down`, `gradient_left`, `gradient_right` | `false` | Area fill |
 | `fill_opacity` | number | `40` | Fill opacity from `0` to `100` |
-| `line_width` | number | `2` | Line thickness (px). Supports Jinja. |
-| `name` | string | — | Override name; omit to use friendly name. Supports Jinja. |
+| `line_width` | number | `2` | Line thickness (px) |
+| `name` | string | — | Override name; omit to use friendly name |
 
 ### Full config & options
 
@@ -105,54 +105,7 @@ entities:
 ### Power
 
 ```yaml
-type: custom:history-graph-card
-title: Power
-time_range: 07:00:00
-time_lines: 00:01:00
-value_lines: 500
-smoothing: 2
-show_legend: true
-legend_position: bottom
-alignment: left
-entities:
-  - entity: sensor.grid_power # Your entity here
-    name: Grid
-    color: "#93B5F2"
-    line_width: 2
-    fill: gradient_down
-    fill_opacity: 35
-  - entity: sensor.solar_power # Your entity here
-    name: Solar
-    color: "#FFE08A"
-    fill: true
-    fill_opacity: 50
-```
 
-### Temperature with thresholds
-
-```yaml
-type: custom:history-graph-card
-title: Living room
-time_range: 01:00:00
-time_lines: 00:06:00
-value_lines: 2
-smoothing: 1
-entities:
-  - entity: sensor.living_room_temperature # Your entity here
-    name: Temperature
-    color: "#7CD5FD"
-    line_width: 2
-    fill: gradient_down
-    fill_opacity: 40
-    color_threshold:
-      - value: 18
-        color: "#93B5F2"
-      - value: 24
-        color: "#F6B38A"
-      - value: 28
-        color: "#E57373"
-    color_threshold_smoothing: 2
-```
 
 ## License
 
