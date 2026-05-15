@@ -1,7 +1,7 @@
 {
   "name": "Aesthetic History Graph Card",
   "render_readme": true,
-  "filename": "history-graph-card.js",
+  "filename": "Aesthetic-History-Graph-Card.js",
   "content_in_root": true,
   "homeassistant": "2023.11.0"
 }

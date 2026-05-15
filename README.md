@@ -10,19 +10,19 @@ All of my (@kattcrazy)'s cards are styled similarly and support Jinja in most, i
 
 1. Open HACS and open the 3-dot menu (top right). Select Custom repositories.
 2. Add this repo
-   - Repository: `https://github.com/kattcrazy/History-Graph-Card`
+   - Repository: `https://github.com/kattcrazy/Aesthetic-History-Graph-Card`
    - Type : `Dashboard`
 3. Search for Aesthetic History Graph Card and Download
 
 ### Manual
 
-1. Download `history-graph-card.js` from the [releases](https://github.com/kattcrazy/History-Graph-Card/releases) page
+1. Download `Aesthetic-History-Graph-Card.js` from the [releases](https://github.com/kattcrazy/Aesthetic-History-Graph-Card/releases) page
 2. Place it in your `config/www/` folder
 3. Add the resource in the Lovelace config:
 
 ```yaml
 resources:
-  - url: /local/history-graph-card.js
+  - url: /local/Aesthetic-History-Graph-Card.js
     type: module
 ```
 

@@ -1,11 +1,11 @@
 /**
- * Aesthetic History Graph Card for Home Assistant Lovelace (v1.1.0).
+ * Aesthetic History Graph Card for Home Assistant Lovelace (v1.2.0).
  *
  * Multi-series time charts from recorder history with configurable styling,
  * thresholds, grid lines, and Jinja-templated options.
  *
  * Load as a module resource:
- *   - url: /local/history-graph-card.js
+ *   - url: /local/Aesthetic-History-Graph-Card.js
  *     type: module
  */
 import { html, css, LitElement, nothing } from 'https://cdn.jsdelivr.net/gh/lit/dist@2/core/lit-core.min.js';
@@ -1623,7 +1623,7 @@ const AESTHETIC_HISTORY_GRAPH_CARD_PICKER = {
   preview: false,
   description:
     'Time-series history chart for numeric entities with custom colours, fills, thresholds, and grid lines.',
-  documentationURL: 'https://github.com/kattcrazy/History-Graph-Card',
+  documentationURL: 'https://github.com/kattcrazy/Aesthetic-History-Graph-Card',
 };
 
 if (window.customCards && Array.isArray(window.customCards)) {
