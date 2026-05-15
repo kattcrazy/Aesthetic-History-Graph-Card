@@ -254,6 +254,15 @@ function normalizeFillMode(raw) {
   return 'none';
 }
 
+function editorTimeLinesEnabled(raw) {
+  const s = raw == null ? '' : String(raw).trim().toLowerCase();
+  return s !== '' && s !== 'off';
+}
+
+function editorHexLooksLikeSwatch(str) {
+  return !!(str != null && /^#[0-9A-Fa-f]{3,8}$/.test(String(str).trim()));
+}
+
 function collectTemplatesDeep(cfg, prefix = '') {
   const out = {};
   if (!cfg || typeof cfg !== 'object') return out;
@@ -1182,6 +1191,9 @@ class AestheticHistoryGraphCardEditor extends LitElement {
     const c = this._config;
     const entities = c.entities || [];
     const entityOptions = this._getEntityOptions();
+    const tlRaw = c.time_lines ?? 'off';
+    const tlOn = editorTimeLinesEnabled(tlRaw);
+    const tlPeriod = tlOn ? String(tlRaw).trim() : '';
 
     return html`
       <div class="editor">
@@ -1255,6 +1267,20 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                           <option value="bottom">Bottom</option>
                         </select>
                       </div>
+                      <div class="option-row option-row-toggle">
+                        <label class="toggle-row">
+                          <span class="toggle-label">Show legend state</span>
+                          <span class="toggle-switch">
+                            <input
+                              type="checkbox"
+                              class="toggle-input"
+                              .checked=${c.show_legend_state !== false}
+                              @change=${(e) => this._valueChanged('show_legend_state', e.target.checked)}
+                            />
+                            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                          </span>
+                        </label>
+                      </div>
                     `
                   : nothing}
               </div>
@@ -1262,36 +1288,67 @@ class AestheticHistoryGraphCardEditor extends LitElement {
         <div class="section">
           <div class="section-header">Chart</div>
           <div class="option-row">
-            <label class="option-label">time_range (dd:hh:mm)</label>
+            <label class="option-label">Time range (dd:hh:mm)</label>
             <input
               type="text"
               class="input"
+              placeholder="e.g. 07:00:00"
               .value=${c.time_range ?? '07:00:00'}
               @input=${(e) => this._valueChanged('time_range', e.target.value)}
             />
           </div>
           <div class="option-row">
-            <label class="option-label">time_lines</label>
-            <input
-              type="text"
-              class="input"
-              placeholder="off or dd:hh:mm"
-              .value=${c.time_lines ?? 'off'}
-              @input=${(e) => this._valueChanged('time_lines', e.target.value)}
-            />
+            <label class="option-label">Show time lines</label>
+            <select
+              class="select"
+              .value=${tlOn ? 'on' : 'off'}
+              @change=${(e) => {
+                const v = e.target.value;
+                if (v === 'off') {
+                  this._valueChanged('time_lines', 'off');
+                  return;
+                }
+                const prev = this._config.time_lines;
+                const prevStr = prev == null ? '' : String(prev).trim();
+                const prevLow = prevStr.toLowerCase();
+                const period =
+                  prevLow !== '' && prevLow !== 'off' ? prevStr : '01:00:00';
+                this._valueChanged('time_lines', period);
+              }}
+            >
+              <option value="off">Off</option>
+              <option value="on">On</option>
+            </select>
           </div>
+          ${tlOn
+            ? html`
+                <div class="option-row">
+                  <label class="option-label">Time line period (dd:hh:mm)</label>
+                  <input
+                    type="text"
+                    class="input"
+                    placeholder="e.g. 01:00:00"
+                    .value=${tlPeriod}
+                    @input=${(e) => {
+                      const v = e.target.value.trim();
+                      this._valueChanged('time_lines', v || '01:00:00');
+                    }}
+                  />
+                </div>
+              `
+            : nothing}
           <div class="option-row">
-            <label class="option-label">value_lines</label>
+            <label class="option-label">Value lines</label>
             <input
               type="text"
               class="input"
-              placeholder="off or number"
+              placeholder="Off or step (e.g. 500)"
               .value=${c.value_lines ?? 'off'}
               @input=${(e) => this._valueChanged('value_lines', e.target.value)}
             />
           </div>
           <div class="option-row">
-            <label class="option-label">smoothing (0–10)</label>
+            <label class="option-label">Smoothing (0–10)</label>
             <input
               type="number"
               class="input"
@@ -1326,6 +1383,8 @@ class AestheticHistoryGraphCardEditor extends LitElement {
             const expanded = this._expandedEntities[i] ?? isTemplate(ent.entity);
             const rows = (ent.entity || '').split('\n').length;
             const th = ent.color_threshold || [];
+            const colorVal = ent.color ?? '';
+            const showEntityColorSwatch = editorHexLooksLikeSwatch(colorVal);
             return html`
               <div class="entity-row">
                 <div class="entity-fields">
@@ -1334,6 +1393,7 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                       ${expanded
                         ? html`<textarea
                             class="input entity-textarea"
+                            placeholder="Entity ID or Jinja template"
                             .value=${ent.entity || ''}
                             rows="${Math.max(6, rows + 1)}"
                             @input=${(e) => this._entityChanged(i, 'entity', e.target.value)}
@@ -1342,6 +1402,7 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                             type="text"
                             class="input entity-input"
                             list="eid-${i}"
+                            placeholder="Entity ID or Jinja template"
                             .value=${ent.entity || ''}
                             @input=${(e) => this._entityChanged(i, 'entity', e.target.value)}
                           />
@@ -1354,22 +1415,27 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                   <div class="entity-options-row">
                     <input
                       type="text"
-                      class="input"
+                      class="input entity-name-input"
                       placeholder="Name"
                       .value=${ent.name ?? ''}
                       @input=${(e) => this._entityChanged(i, 'name', e.target.value || undefined)}
                     />
-                    <input
-                      type="text"
-                      class="input"
-                      placeholder="Color"
-                      .value=${ent.color ?? ''}
-                      @input=${(e) => this._entityChanged(i, 'color', e.target.value || undefined)}
-                    />
+                    <div class="color-with-swatch">
+                      ${showEntityColorSwatch
+                        ? html`<span class="color-swatch" style="background:${colorVal.trim()}"></span>`
+                        : nothing}
+                      <input
+                        type="text"
+                        class="input color-input"
+                        placeholder="Color (hex or var)"
+                        .value=${colorVal}
+                        @input=${(e) => this._entityChanged(i, 'color', e.target.value.trim() || undefined)}
+                      />
+                    </div>
                     <input
                       type="number"
                       class="input narrow"
-                      placeholder="line_width"
+                      placeholder="Line width (px)"
                       .value=${ent.line_width ?? ''}
                       @input=${(e) => {
                         const v = e.target.value;
@@ -1378,7 +1444,7 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                     />
                   </div>
                   <div class="entity-options-row">
-                    <label class="option-label">fill</label>
+                    <label class="option-label">Fill</label>
                     <select
                       class="select flex1"
                       .value=${typeof ent.fill === 'boolean' ? (ent.fill ? 'true' : 'false') : ent.fill ?? 'false'}
@@ -1387,19 +1453,19 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                         this._entityChanged(i, 'fill', v === 'true' ? true : v === 'false' ? false : v);
                       }}
                     >
-                      <option value="false">false</option>
-                      <option value="true">true (solid)</option>
-                      <option value="gradient_up">gradient_up</option>
-                      <option value="gradient_down">gradient_down</option>
-                      <option value="gradient_left">gradient_left</option>
-                      <option value="gradient_right">gradient_right</option>
+                      <option value="false">None</option>
+                      <option value="true">Solid</option>
+                      <option value="gradient_up">Gradient up</option>
+                      <option value="gradient_down">Gradient down</option>
+                      <option value="gradient_left">Gradient left</option>
+                      <option value="gradient_right">Gradient right</option>
                     </select>
                     <input
                       type="number"
                       class="input narrow"
                       min="0"
                       max="100"
-                      placeholder="fill_opacity"
+                      placeholder="Fill opacity (0–100)"
                       .value=${ent.fill_opacity ?? ''}
                       @input=${(e) => {
                         const v = e.target.value;
@@ -1408,7 +1474,7 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                     />
                   </div>
                   <div class="entity-options-row">
-                    <label class="option-label">color_threshold_smoothing (0–10)</label>
+                    <label class="option-label">Color threshold smoothing (0–10)</label>
                     <input
                       type="number"
                       class="input narrow"
@@ -1419,8 +1485,10 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                     />
                   </div>
                   <div class="threshold-block">
-                    ${th.map(
-                      (row, ti) => html`
+                    ${th.map((row, ti) => {
+                      const thColor = row.color ?? '';
+                      const showThSwatch = editorHexLooksLikeSwatch(thColor);
+                      return html`
                         <div class="threshold-row">
                           <input
                             type="number"
@@ -1428,18 +1496,24 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                             .value=${row.value}
                             @input=${(e) => this._thresholdChanged(i, ti, 'value', parseFloat(e.target.value) || 0)}
                           />
-                          <input
-                            type="text"
-                            class="input"
-                            .value=${row.color ?? ''}
-                            @input=${(e) => this._thresholdChanged(i, ti, 'color', e.target.value)}
-                          />
+                          <div class="color-with-swatch threshold-color-wrap">
+                            ${showThSwatch
+                              ? html`<span class="color-swatch" style="background:${thColor.trim()}"></span>`
+                              : nothing}
+                            <input
+                              type="text"
+                              class="input color-input threshold-color-input"
+                              placeholder="Hex or CSS variable"
+                              .value=${thColor}
+                              @input=${(e) => this._thresholdChanged(i, ti, 'color', e.target.value)}
+                            />
+                          </div>
                           <button type="button" class="remove-btn" @click=${() => this._removeThreshold(i, ti)}>
                             <ha-icon icon="mdi:delete"></ha-icon>
                           </button>
                         </div>
-                      `
-                    )}
+                      `;
+                    })}
                     <button type="button" class="add-threshold" @click=${() => this._addThreshold(i)}>Add threshold</button>
                   </div>
                 </div>
@@ -1460,167 +1534,308 @@ class AestheticHistoryGraphCardEditor extends LitElement {
 
   static styles = css`
     .editor {
-      padding-bottom: 16px;
-    }
-    .section {
-      padding: 12px 16px;
-      border-top: 1px solid var(--divider-color, rgba(127, 127, 127, 0.25));
-    }
-    .section-header {
-      font-weight: 600;
-      margin-bottom: 8px;
-    }
-    .option-row {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      margin-bottom: 10px;
-    }
-    .option-row-toggle {
-      flex-direction: row;
-      align-items: center;
-    }
-    .option-label {
-      font-size: 12px;
-      color: var(--secondary-text-color);
-    }
-    .option-help {
-      font-size: 12px;
-      color: var(--secondary-text-color);
-      margin-bottom: 8px;
-    }
-    .input,
-    .select {
-      width: 100%;
-      padding: 8px 10px;
-      border-radius: 8px;
-      border: 1px solid var(--divider-color);
-      background: var(--card-background-color);
+      padding: 20px;
+      background: var(--secondary-background-color, var(--card-background-color, #1c1c1c));
       color: var(--primary-text-color);
+      font-family: var(--mdc-typography-font-family, Roboto, sans-serif);
+      max-width: 100%;
       box-sizing: border-box;
     }
-    .input.narrow {
-      max-width: 100px;
+    .section {
+      margin-bottom: 20px;
+      padding: 16px;
+      background: var(--card-background-color, var(--ha-card-background, rgba(0, 0, 0, 0.2)));
+      border-radius: 12px;
+      border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.12));
     }
-    .flex1 {
-      flex: 1;
+    .section:last-child {
+      margin-bottom: 0;
+    }
+    .section-header {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--secondary-text-color);
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .section-subheader {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--secondary-text-color);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+      margin-top: 4px;
+    }
+    .option-row {
+      margin-bottom: 16px;
+    }
+    .option-row:last-of-type {
+      margin-bottom: 0;
+    }
+    .option-label {
+      display: block;
+      font-size: 14px;
+      color: var(--primary-text-color);
+      margin-bottom: 6px;
+    }
+    .option-row-toggle {
+      margin-bottom: 14px;
     }
     .toggle-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
       width: 100%;
+      cursor: pointer;
+      gap: 12px;
+    }
+    .toggle-label {
+      font-size: 14px;
+      color: var(--primary-text-color);
+    }
+    .toggle-switch {
+      position: relative;
+      flex-shrink: 0;
     }
     .toggle-input {
-      display: none;
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+      margin: 0;
+      pointer-events: none;
+    }
+    .toggle-track {
+      display: flex;
+      align-items: center;
+      width: 44px;
+      height: 24px;
+      border-radius: 12px;
+      background: var(--disabled-color, rgba(255, 255, 255, 0.2));
+      transition: background 0.2s ease;
+      padding: 0 2px;
+      box-sizing: border-box;
     }
     .toggle-input:checked + .toggle-track {
       background: var(--primary-color);
     }
-    .toggle-input:checked + .toggle-track .toggle-thumb {
-      transform: translateX(18px);
+    .toggle-thumb {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+      transition: transform 0.2s ease;
     }
-    .toggle-track {
-      width: 40px;
-      height: 22px;
+    .toggle-input:checked + .toggle-track .toggle-thumb {
+      transform: translateX(20px);
+      background: rgba(255, 255, 255, 0.95);
+    }
+    .option-help {
+      font-size: 12px;
+      color: var(--secondary-text-color);
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+    .input,
+    .select {
+      width: 100%;
+      padding: 10px 14px;
       border-radius: 12px;
-      background: var(--disabled-color, #888);
-      position: relative;
+      border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.12));
+      background: var(--card-background-color, var(--ha-card-background, #fff));
+      color: var(--primary-text-color);
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    .input:focus,
+    .select:focus {
+      outline: none;
+      border-color: var(--primary-color);
+    }
+    .input:disabled,
+    .input.disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .select {
       cursor: pointer;
     }
-    .toggle-thumb {
-      position: absolute;
-      top: 2px;
-      left: 2px;
-      width: 18px;
-      height: 18px;
-      border-radius: 50%;
-      background: #fff;
-      transition: transform 0.2s;
+    .select option {
+      background: var(--card-background-color, var(--ha-card-background, #fff));
+      color: var(--primary-text-color);
+    }
+    .input.narrow {
+      width: auto;
+      min-width: 60px;
+      max-width: 120px;
+    }
+    .flex1 {
+      flex: 1;
+      min-width: 0;
+      width: auto;
     }
     .entity-row {
       display: flex;
-      gap: 8px;
       align-items: flex-start;
+      gap: 10px;
       margin-bottom: 12px;
-      padding: 10px;
-      border: 1px solid var(--divider-color);
-      border-radius: 10px;
+      padding: 14px;
+      background: var(--input-fill-color, rgba(0, 0, 0, 0.2));
+      border-radius: 12px;
+      border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.08));
     }
     .entity-fields {
       flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
       min-width: 0;
     }
     .entity-primary-row {
       display: flex;
       gap: 8px;
+      align-items: flex-start;
+      width: 100%;
     }
     .entity-input-wrap {
       flex: 1;
       min-width: 0;
     }
-    .entity-textarea {
+    .entity-input-wrap .entity-input {
       width: 100%;
-      min-height: 72px;
-      resize: vertical;
+      box-sizing: border-box;
     }
-    .entity-input {
-      width: 100%;
+    .entity-input-wrap .entity-textarea {
+      resize: vertical;
+      min-height: 80px;
     }
     .entity-options-row {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      margin-top: 8px;
       align-items: center;
     }
-    .expand-btn,
-    .remove-btn {
+    .entity-options-row .entity-name-input {
+      flex: 1;
+      min-width: 100px;
+    }
+    .color-with-swatch {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .color-swatch {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      flex-shrink: 0;
+      border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.2));
+    }
+    .entity-options-row .color-input {
+      min-width: 80px;
+      max-width: 120px;
+    }
+    .threshold-color-wrap {
+      flex: 1;
+      min-width: 120px;
+    }
+    .threshold-color-wrap .threshold-color-input {
+      flex: 1;
+      min-width: 80px;
+      width: 100%;
+      max-width: none;
+      box-sizing: border-box;
+    }
+    .expand-btn {
+      padding: 8px;
       border: none;
+      border-radius: 8px;
       background: transparent;
       color: var(--secondary-text-color);
       cursor: pointer;
-      padding: 8px;
-      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
     }
-    .expand-btn:hover,
-    .remove-btn:hover {
+    .expand-btn:hover {
       color: var(--primary-color);
-      background: rgba(var(--rgb-primary-color), 0.08);
+      background: rgba(var(--rgb-primary-color), 0.1);
+    }
+    .remove-btn {
+      padding: 8px;
+      border: none;
+      border-radius: 12px;
+      background: transparent;
+      color: var(--secondary-text-color);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .remove-btn:hover {
+      color: var(--error-color, #f44336);
+      background: rgba(var(--rgb-error-color, 244, 67, 54), 0.15);
     }
     .threshold-block {
-      margin-top: 8px;
+      margin-top: 4px;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 8px;
+      width: 100%;
     }
     .threshold-row {
       display: flex;
       gap: 8px;
       align-items: center;
+      flex-wrap: wrap;
+      width: 100%;
+    }
+    .threshold-row .input.narrow {
+      flex-shrink: 0;
+    }
+    .threshold-row .input:not(.narrow) {
+      flex: 1;
+      min-width: 120px;
     }
     .add-threshold {
-      font-size: 12px;
-      color: var(--primary-color);
-      background: transparent;
-      border: 1px dashed var(--divider-color);
-      border-radius: 8px;
-      padding: 8px;
-      cursor: pointer;
-    }
-    .add-btn {
-      width: 100%;
-      margin-top: 8px;
-      padding: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 14px;
       border-radius: 12px;
       border: 1px dashed var(--divider-color);
       background: transparent;
       color: var(--primary-color);
+      font-size: 13px;
       cursor: pointer;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .add-threshold:hover {
+      background: rgba(var(--rgb-primary-color), 0.1);
+      border-color: var(--primary-color);
+    }
+    .add-btn {
       display: flex;
       align-items: center;
-      justify-content: center;
       gap: 8px;
+      padding: 12px 16px;
+      border-radius: 12px;
+      border: 1px dashed var(--divider-color);
+      background: transparent;
+      color: var(--primary-color);
+      font-size: 14px;
+      cursor: pointer;
+      width: 100%;
+      justify-content: center;
+    }
+    .add-btn:hover {
+      background: rgba(var(--rgb-primary-color), 0.1);
+      border-color: var(--primary-color);
     }
   `;
 }
