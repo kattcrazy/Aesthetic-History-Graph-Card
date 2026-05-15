@@ -16,6 +16,12 @@ function isTemplate(v) {
   return typeof v === 'string' && v.includes('{{') && v.includes('}}');
 }
 
+function isHardcodedNumber(v) {
+  if (v == null) return false;
+  const s = String(v).trim();
+  return s !== '' && !Number.isNaN(Number(s));
+}
+
 function getAtPath(obj, path) {
   const parts = path.split('.');
   let cur = obj;
@@ -79,6 +85,16 @@ function ensureMinChartPoints(pts, min = 2) {
     return [{ t: p.t - 60000, v: p.v }, p];
   }
   return pts;
+}
+
+/** YAML boolean or template string; `defaultVal` when unset or unknown. */
+function resolveBool(raw, defaultVal) {
+  if (raw === undefined || raw === null || raw === '') return defaultVal;
+  if (typeof raw === 'boolean') return raw;
+  const s = String(raw).toLowerCase().trim();
+  if (s === 'true' || s === 'yes' || s === 'on' || s === '1') return true;
+  if (s === 'false' || s === 'no' || s === 'off' || s === '0') return false;
+  return defaultVal;
 }
 
 function partsInTimeZone(ms, timeZone) {
@@ -155,6 +171,16 @@ function hexToRgb(hex) {
 function rgbToHex(r, g, b) {
   const x = (n) => clamp(Math.round(n), 0, 255).toString(16).padStart(2, '0');
   return `#${x(r)}${x(g)}${x(b)}`;
+}
+
+/** Lovelace editor: stroke colour when empty — `rgb_color` if present, else default palette (matches runtime). */
+function editorSuggestColorForEntity(hassState, seriesIndex) {
+  const rgb = hassState?.attributes?.rgb_color;
+  if (Array.isArray(rgb) && rgb.length >= 3) {
+    const [r, g, b] = rgb.map((x) => Number(x));
+    if ([r, g, b].every((n) => Number.isFinite(n))) return rgbToHex(r, g, b);
+  }
+  return DEFAULT_COLORS[seriesIndex % DEFAULT_COLORS.length];
 }
 
 function lerpColor(c1, c2, t) {
@@ -254,7 +280,8 @@ function normalizeFillMode(raw) {
   return 'none';
 }
 
-function editorTimeLinesEnabled(raw) {
+/** Editor “On” when stored value is non-empty and not case-insensitive `off`. */
+function editorStoredOptionOn(raw) {
   const s = raw == null ? '' : String(raw).trim().toLowerCase();
   return s !== '' && s !== 'off';
 }
@@ -328,8 +355,10 @@ class AestheticHistoryGraphCard extends LitElement {
       entities: [],
       legend_position: 'bottom',
       show_legend: true,
-      show_legend_state: true,
+      show_state: true,
       show_title: true,
+      show_unit: false,
+      unit_source: 'automatic',
       smoothing: 0,
       time_lines: 'off',
       time_range: '07:00:00',
@@ -339,11 +368,43 @@ class AestheticHistoryGraphCard extends LitElement {
   }
 
   _legendShowsState(row) {
-    const perEntity = this._resolve(`entities.${row._cfgIdx}.show_legend_state`);
-    if (perEntity !== undefined && perEntity !== null && perEntity !== '') {
-      return perEntity !== false && perEntity !== 'false';
+    const idx = row._cfgIdx;
+    const cardRaw = this._resolve('show_state');
+    const cardVal = resolveBool(cardRaw, true);
+    const perRaw = this._resolve(`entities.${idx}.show_state`);
+    if (perRaw !== undefined && perRaw !== null && perRaw !== '') {
+      return resolveBool(perRaw, cardVal);
     }
-    return this._resolve('show_legend_state') !== false;
+    return cardVal;
+  }
+
+  _legendShowsUnit() {
+    const showLegend = this._resolve('show_legend') !== false;
+    if (!showLegend) return false;
+    if (!resolveBool(this._resolve('show_state'), true)) return false;
+    return resolveBool(this._resolve('show_unit'), false);
+  }
+
+  _getDisplayUnitForRow(row) {
+    const source = this._resolve('unit_source') ?? 'automatic';
+    if (source === 'custom') {
+      const u = this._resolve('unit_custom');
+      return u != null && String(u).trim() !== '' ? String(u).trim() : '';
+    }
+    const id = row._entityId;
+    if (!id || isTemplate(id) || isHardcodedNumber(id)) return '';
+    const st = this.hass?.states?.[id];
+    const u = st?.attributes?.unit_of_measurement;
+    return u != null && String(u).trim() !== '' ? String(u).trim() : '';
+  }
+
+  /** Legend swatch corner radius (px); chart SVG unchanged. */
+  _resolvedLegendSwatchRadiusPx() {
+    const raw = this._resolve('legend_radius');
+    if (raw == null || raw === '') return 3;
+    const n = parseFloat(String(raw).replace(/[^\d.-]/g, ''));
+    if (!Number.isFinite(n)) return 3;
+    return clamp(Math.round(n), 0, 24);
   }
 
   setConfig(config) {
@@ -590,7 +651,6 @@ class AestheticHistoryGraphCard extends LitElement {
     return { tmin: start, tmax: end };
   }
 
-  /** Same empty UI as Stacked Bar Card. */
   _renderEmpty() {
     return html`
       <div class="card-content empty">
@@ -672,6 +732,7 @@ class AestheticHistoryGraphCard extends LitElement {
     const hist = this._historyByEntity;
     const justify =
       alignment === 'center' ? 'center' : alignment === 'right' ? 'flex-end' : 'flex-start';
+    const swatchRadiusPx = this._resolvedLegendSwatchRadiusPx();
     return html`
       <div class="legend" style="justify-content:${justify}">
         ${rows.map((row, i) => {
@@ -684,14 +745,20 @@ class AestheticHistoryGraphCard extends LitElement {
             id;
           const color =
             this._resolve(`entities.${row._cfgIdx}.color`) || DEFAULT_COLORS[i % DEFAULT_COLORS.length];
-          const unit = this.hass?.states?.[id]?.attributes?.unit_of_measurement || '';
           const valStr = last != null ? String(Math.round(last * 1000) / 1000) : '—';
-          const text = this._legendShowsState(row)
-            ? `${name}: ${valStr}${unit ? ` ${unit}` : ''}`
-            : name;
+          const showState = this._legendShowsState(row);
+          const showUnit = this._legendShowsUnit();
+          const unitStr = showUnit ? this._getDisplayUnitForRow(row) : '';
+          let text = name;
+          if (showState) {
+            text = `${name}: ${valStr}`;
+            if (showUnit && unitStr) text += ` ${unitStr}`;
+          } else if (showUnit && unitStr) {
+            text = `${name} ${unitStr}`;
+          }
           return html`
             <div class="legend-item">
-              <span class="legend-swatch" style="background:${color};border-radius:3px"></span>
+              <span class="legend-swatch" style="background:${color};border-radius:${swatchRadiusPx}px"></span>
               <span class="legend-label">${text}</span>
             </div>
           `;
@@ -1102,11 +1169,65 @@ class AestheticHistoryGraphCardEditor extends LitElement {
     this.lovelace = null;
     this._config = {};
     this._expandedEntities = {};
+    this._entitiesSig = undefined;
   }
 
   setConfig(config) {
     this._config = config || {};
     if (!Array.isArray(this._config.entities)) this._config.entities = [];
+    const sig = JSON.stringify(
+      (this._config.entities || []).map((e) =>
+        e && typeof e === 'object' ? String(e.entity ?? '').trim() : ''
+      )
+    );
+    const changedList = sig !== this._entitiesSig;
+    this._entitiesSig = sig;
+    if (changedList) {
+      queueMicrotask(() => this._maybeBackfillEntityDefaults());
+    }
+  }
+
+  updated(changed) {
+    super.updated(changed);
+    if (!changed.has('hass')) return;
+    const prevHass = changed.get('hass');
+    if (prevHass || !this.hass?.states) return;
+    queueMicrotask(() => this._maybeBackfillEntityDefaults());
+  }
+
+  /** When HA state becomes available, fill empty name/colour for plain entity IDs (no templates). */
+  _maybeBackfillEntityDefaults() {
+    const hass = this.hass;
+    if (!hass?.states) return;
+    const list = this._config.entities;
+    if (!Array.isArray(list) || !list.length) return;
+    let touched = false;
+    const entities = list.map((ent, i) => {
+      if (!ent || typeof ent !== 'object') return ent;
+      const raw = ent.entity;
+      if (raw == null || String(raw).trim() === '' || isTemplate(raw)) return ent;
+      const id = String(raw).trim();
+      const st = hass.states[id];
+      if (!st) return ent;
+      const nameEmpty = ent.name == null || String(ent.name).trim() === '';
+      const colorEmpty = ent.color == null || String(ent.color).trim() === '';
+      if (!nameEmpty && !colorEmpty) return ent;
+      const row = { ...ent };
+      if (nameEmpty) {
+        const fn = st.attributes?.friendly_name;
+        row.name = fn != null && String(fn).trim() !== '' ? String(fn).trim() : id;
+        touched = true;
+      }
+      if (colorEmpty) {
+        row.color = editorSuggestColorForEntity(st, i);
+        touched = true;
+      }
+      return row;
+    });
+    if (!touched) return;
+    const cfg = { ...this._config, entities };
+    this._config = cfg;
+    this.configChanged(cfg);
   }
 
   configChanged(newConfig) {
@@ -1132,6 +1253,28 @@ class AestheticHistoryGraphCardEditor extends LitElement {
     if (!entities[index]) entities[index] = { entity: '' };
     if (value === '' || value === null || value === undefined) delete entities[index][field];
     else entities[index][field] = value;
+
+    if (field === 'entity' && value !== '') {
+      const trimmed = String(value).trim();
+      const hass = this.hass;
+      if (hass?.states && trimmed && !isTemplate(trimmed)) {
+        const st = hass.states[trimmed];
+        if (st) {
+          const row = { ...entities[index] };
+          const nameEmpty = row.name == null || String(row.name).trim() === '';
+          const colorEmpty = row.color == null || String(row.color).trim() === '';
+          if (nameEmpty) {
+            const fn = st.attributes?.friendly_name;
+            row.name = fn != null && String(fn).trim() !== '' ? String(fn).trim() : trimmed;
+          }
+          if (colorEmpty) {
+            row.color = editorSuggestColorForEntity(st, index);
+          }
+          entities[index] = row;
+        }
+      }
+    }
+
     if (field === 'entity' && value === '') entities.splice(index, 1);
     this._valueChanged('entities', entities);
   }
@@ -1192,8 +1335,11 @@ class AestheticHistoryGraphCardEditor extends LitElement {
     const entities = c.entities || [];
     const entityOptions = this._getEntityOptions();
     const tlRaw = c.time_lines ?? 'off';
-    const tlOn = editorTimeLinesEnabled(tlRaw);
+    const tlOn = editorStoredOptionOn(tlRaw);
     const tlPeriod = tlOn ? String(tlRaw).trim() : '';
+    const vlRaw = c.value_lines ?? 'off';
+    const vlOn = editorStoredOptionOn(vlRaw);
+    const vlStep = vlOn ? String(vlRaw).trim() : '';
 
     return html`
       <div class="editor">
@@ -1220,12 +1366,13 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                         <input
                           type="text"
                           class="input"
+                          placeholder="Card title"
                           .value=${c.title ?? ''}
                           @input=${(e) => this._valueChanged('title', e.target.value)}
                         />
                       </div>
                       <div class="option-row">
-                        <label class="option-label">Title position</label>
+                        <label class="option-label">Position</label>
                         <select
                           class="select"
                           .value=${c.title_position ?? 'top'}
@@ -1267,20 +1414,87 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                           <option value="bottom">Bottom</option>
                         </select>
                       </div>
+                      <div class="option-row">
+                        <label class="option-label">Radius (px)</label>
+                        <input
+                          type="number"
+                          class="input narrow"
+                          min="0"
+                          max="24"
+                          .value=${c.legend_radius != null && c.legend_radius !== '' ? c.legend_radius : ''}
+                          placeholder="3"
+                          @input=${(e) => {
+                            const v = e.target.value.trim();
+                            this._valueChanged('legend_radius', v === '' ? undefined : parseInt(v, 10) || 0);
+                          }}
+                        />
+                      </div>
+                      <div class="option-help">Legend swatches only</div>
                       <div class="option-row option-row-toggle">
                         <label class="toggle-row">
-                          <span class="toggle-label">Show legend state</span>
+                          <span class="toggle-label">Show state</span>
                           <span class="toggle-switch">
                             <input
                               type="checkbox"
                               class="toggle-input"
-                              .checked=${c.show_legend_state !== false}
-                              @change=${(e) => this._valueChanged('show_legend_state', e.target.checked)}
+                              .checked=${resolveBool(c.show_state, true)}
+                              @change=${(e) => {
+                                const on = e.target.checked;
+                                if (!on) this._valueChanged('show_unit', false);
+                                this._valueChanged('show_state', on);
+                              }}
                             />
                             <span class="toggle-track"><span class="toggle-thumb"></span></span>
                           </span>
                         </label>
                       </div>
+                      ${resolveBool(c.show_state, true)
+                        ? html`
+                            <div class="option-row option-row-toggle">
+                              <label class="toggle-row">
+                                <span class="toggle-label">Show unit</span>
+                                <span class="toggle-switch">
+                                  <input
+                                    type="checkbox"
+                                    class="toggle-input"
+                                    .checked=${resolveBool(c.show_unit, false)}
+                                    @change=${(e) => this._valueChanged('show_unit', e.target.checked)}
+                                  />
+                                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                                </span>
+                              </label>
+                            </div>
+                            ${resolveBool(c.show_unit, false)
+                              ? html`
+                                  <div class="option-row">
+                                    <label class="option-label">Unit source</label>
+                                    <select
+                                      class="select"
+                                      .value=${c.unit_source ?? 'automatic'}
+                                      @change=${(e) => this._valueChanged('unit_source', e.target.value)}
+                                    >
+                                      <option value="automatic">Automatic</option>
+                                      <option value="custom">Custom</option>
+                                    </select>
+                                  </div>
+                                  ${(c.unit_source ?? 'automatic') === 'custom'
+                                    ? html`
+                                        <div class="option-row">
+                                          <label class="option-label">Custom unit</label>
+                                          <input
+                                            type="text"
+                                            class="input"
+                                            .value=${c.unit_custom ?? ''}
+                                            placeholder="e.g. kWh, %"
+                                            @input=${(e) => this._valueChanged('unit_custom', e.target.value)}
+                                          />
+                                        </div>
+                                      `
+                                    : nothing}
+                                `
+                              : nothing}
+                          `
+                        : nothing}
                     `
                   : nothing}
               </div>
@@ -1338,15 +1552,45 @@ class AestheticHistoryGraphCardEditor extends LitElement {
               `
             : nothing}
           <div class="option-row">
-            <label class="option-label">Value lines</label>
-            <input
-              type="text"
-              class="input"
-              placeholder="Off or step (e.g. 500)"
-              .value=${c.value_lines ?? 'off'}
-              @input=${(e) => this._valueChanged('value_lines', e.target.value)}
-            />
+            <label class="option-label">Show value lines</label>
+            <select
+              class="select"
+              .value=${vlOn ? 'on' : 'off'}
+              @change=${(e) => {
+                const v = e.target.value;
+                if (v === 'off') {
+                  this._valueChanged('value_lines', 'off');
+                  return;
+                }
+                const prev = this._config.value_lines;
+                const prevStr = prev == null ? '' : String(prev).trim();
+                const prevLow = prevStr.toLowerCase();
+                const step =
+                  prevLow !== '' && prevLow !== 'off' ? prevStr : '500';
+                this._valueChanged('value_lines', step);
+              }}
+            >
+              <option value="off">Off</option>
+              <option value="on">On</option>
+            </select>
           </div>
+          ${vlOn
+            ? html`
+                <div class="option-row">
+                  <label class="option-label">Value line step</label>
+                  <input
+                    type="text"
+                    class="input"
+                    placeholder="e.g. 500"
+                    .value=${vlStep}
+                    @input=${(e) => {
+                      const v = e.target.value.trim();
+                      this._valueChanged('value_lines', v || '500');
+                    }}
+                  />
+                </div>
+              `
+            : nothing}
           <div class="option-row">
             <label class="option-label">Smoothing (0–10)</label>
             <input
@@ -1358,10 +1602,6 @@ class AestheticHistoryGraphCardEditor extends LitElement {
               @input=${(e) => this._valueChanged('smoothing', parseFloat(e.target.value) || 0)}
             />
           </div>
-        </div>
-
-        <div class="section">
-          <div class="section-header">Layout</div>
           <div class="option-row">
             <label class="option-label">Alignment</label>
             <select
@@ -1374,6 +1614,7 @@ class AestheticHistoryGraphCardEditor extends LitElement {
               <option value="right">Right</option>
             </select>
           </div>
+          <div class="option-help">Alignment applies to both title and legend</div>
         </div>
 
         <div class="section">
@@ -1465,7 +1706,7 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                       class="input narrow"
                       min="0"
                       max="100"
-                      placeholder="Fill opacity (0–100)"
+                      placeholder="Opacity"
                       .value=${ent.fill_opacity ?? ''}
                       @input=${(e) => {
                         const v = e.target.value;

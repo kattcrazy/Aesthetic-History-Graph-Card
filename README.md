@@ -37,11 +37,15 @@ All options support Jinja templates (strings containing `{{ }}`).
 | `alignment` | `left`, `center`, `right` | `left` | Horizontal alignment for title and legend |
 | `entities` | array | `[]` | Entity list (see below) |
 | `legend_position` | `top`, `bottom` | `bottom` | Legend placement |
+| `legend_radius` | number | `3` | Radius of legend colour swatches |
 | `show_legend` | boolean | `true` | Show legend |
-| `show_legend_state` | boolean | `true` | Show current value and unit in legend entries |
+| `show_state` | boolean | `true` | Show the current numeric value in the legend |
 | `show_title` | boolean | `true` | Show title |
+| `show_unit` | boolean | `false` | Show the unit next to the value in the legend (only when `show_state` is true) |
+| `unit_source` | `automatic`, `custom` | `automatic` | Can be automatic or custom text |
+| `unit_custom` | string | — | When `unit_source` is `custom` |
 | `smoothing` | number | `0` | Path smoothing from `0` (straight segments) to `10` (strongest curve) |
-| `time_lines` | `off` or `dd:hh:mm` | `off` | Vertical time guides|
+| `time_lines` | `off` or `dd:hh:mm` | `off` | Vertical time guides (for example `00:01:00` would mean a line every 1 hour ) |
 | `time_range` | string `dd:hh:mm` | `07:00:00` | History window|
 | `title` | string | — | Card title text |
 | `title_position` | `top`, `bottom` | `top` | Title placement |
@@ -59,7 +63,7 @@ All options support Jinja templates (strings containing `{{ }}`).
 | `fill_opacity` | number | `40` | Fill opacity from `0` to `100` |
 | `line_width` | number | `2` | Line thickness (px) |
 | `name` | string | — | Override name; omit to use friendly name |
-| `show_legend_state` | boolean | card default | Per-series override for legend current value |
+| `show_state` | boolean | card default | Per-series override for showing the value in the legend |
 
 ### Full config & options
 
@@ -74,8 +78,11 @@ title: Power
 title_position: top/bottom
 
 show_legend: true/false
-show_legend_state: true/false
+show_state: true
+show_unit: true
+unit_source: automatic
 legend_position: top/bottom
+# legend_radius: 6              # optional — px, legend swatches only (default 3)
 
 time_range: 07:00:00          # dd:hh:mm — last 7 days
 time_lines: off                 # off or dd:hh:mm (midnight-aligned)
