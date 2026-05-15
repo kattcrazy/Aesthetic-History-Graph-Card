@@ -1,5 +1,5 @@
 /**
- * Aesthetic History Graph Card for Home Assistant Lovelace (v1.2.0).
+ * Aesthetic History Graph Card for Home Assistant Lovelace
  *
  * Multi-series time charts from recorder history with configurable styling,
  * thresholds, grid lines, and Jinja-templated options.
@@ -866,16 +866,28 @@ class AestheticHistoryGraphCard extends LitElement {
         }
 
         if (fillAttr) {
-          fillPaths.push(html`
-            <path
-              class="area-path"
-              d="${dFill}"
-              fill="${fillAttr}"
-              fill-opacity="${fillOpAttr != null ? fillOpAttr : 1}"
-              mask=${maskAttr || undefined}
-              stroke="none"
-            />
-          `);
+          fillPaths.push(
+            maskAttr
+              ? html`
+              <path
+                class="area-path"
+                d="${dFill}"
+                fill="${fillAttr}"
+                fill-opacity="${fillOpAttr != null ? fillOpAttr : 1}"
+                stroke="none"
+                mask="${maskAttr}"
+              />
+            `
+              : html`
+              <path
+                class="area-path"
+                d="${dFill}"
+                fill="${fillAttr}"
+                fill-opacity="${fillOpAttr != null ? fillOpAttr : 1}"
+                stroke="none"
+              />
+            `
+          );
         }
       }
 
@@ -891,7 +903,7 @@ class AestheticHistoryGraphCard extends LitElement {
           }
           if (c !== lastC && seg.length) {
             const d = smoothPointsToPathD(seg, smoothing);
-            linePaths.push(html`<path class="line-path" d="${d}" fill="none" stroke="${lastC}" stroke-width="${lineWidth}" stroke-linejoin="round" stroke-linecap="round" />`);
+            linePaths.push(html`<path class="line-path" vector-effect="non-scaling-stroke" d="${d}" fill="none" stroke="${lastC}" stroke-width="${lineWidth}" stroke-linejoin="round" stroke-linecap="round" />`);
             seg = [xy[i - 1], xy[i]];
             lastC = c;
           } else {
@@ -900,12 +912,13 @@ class AestheticHistoryGraphCard extends LitElement {
         }
         if (seg.length) {
           const d = smoothPointsToPathD(seg, smoothing);
-          linePaths.push(html`<path class="line-path" d="${d}" fill="none" stroke="${lastC}" stroke-width="${lineWidth}" stroke-linejoin="round" stroke-linecap="round" />`);
+          linePaths.push(html`<path class="line-path" vector-effect="non-scaling-stroke" d="${d}" fill="none" stroke="${lastC}" stroke-width="${lineWidth}" stroke-linejoin="round" stroke-linecap="round" />`);
         }
       } else {
         linePaths.push(html`
           <path
             class="line-path"
+            vector-effect="non-scaling-stroke"
             d="${dLine}"
             fill="none"
             stroke="${baseColor}"
