@@ -1,6 +1,6 @@
 # Aesthetic History Graph Card
 
-A time-series history chart with configurable colours, fills, thresholds, and grid lines.
+A time-series history graph with configurable colours, fills, thresholds, and grid lines.
 
 All of my (@kattcrazy)'s cards are styled similarly and support Jinja in most, if not all option fields.
 
@@ -46,7 +46,7 @@ All options support Jinja templates (strings containing `{{ }}`).
 | `unit_custom` | string | — | When `unit_source` is `custom` |
 | `smoothing` | number | `0` | Path smoothing from `0` (straight segments) to `10` (strongest curve) |
 | `time_lines` | `off` or `dd:hh:mm` | `off` | Vertical time guides (for example `00:01:00` would mean a line every 1 hour ) |
-| `time_range` | string `dd:hh:mm` | `07:00:00` | History window|
+| `time_range` | string `dd:hh:mm` | `07:00:00` | History window |
 | `title` | string | — | Card title text |
 | `title_position` | `top`, `bottom` | `top` | Title placement |
 | `value_lines` | `off` or number | `off` | Horizontal guides at that numeric interval (for example `500` would mean lines at 0, 500, 1000, …) |

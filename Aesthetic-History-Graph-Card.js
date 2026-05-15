@@ -1429,7 +1429,6 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                           }}
                         />
                       </div>
-                      <div class="option-help">Legend swatches only</div>
                       <div class="option-row option-row-toggle">
                         <label class="toggle-row">
                           <span class="toggle-label">Show state</span>
@@ -1502,14 +1501,37 @@ class AestheticHistoryGraphCardEditor extends LitElement {
         <div class="section">
           <div class="section-header">Chart</div>
           <div class="option-row">
-            <label class="option-label">Time range (dd:hh:mm)</label>
+            <label class="option-label">Time range — default 7 days (dd:hh:mm)</label>
             <input
               type="text"
               class="input"
-              placeholder="e.g. 07:00:00"
+              placeholder="07:00:00"
               .value=${c.time_range ?? '07:00:00'}
               @input=${(e) => this._valueChanged('time_range', e.target.value)}
             />
+          </div>
+          <div class="option-row">
+            <label class="option-label">Smoothing (0–10)</label>
+            <input
+              type="number"
+              class="input"
+              min="0"
+              max="10"
+              .value=${c.smoothing ?? 0}
+              @input=${(e) => this._valueChanged('smoothing', parseFloat(e.target.value) || 0)}
+            />
+          </div>
+          <div class="option-row">
+            <label class="option-label">Alignment</label>
+            <select
+              class="select"
+              .value=${c.alignment ?? 'left'}
+              @change=${(e) => this._valueChanged('alignment', e.target.value)}
+            >
+              <option value="left">Left</option>
+              <option value="center">Center</option>
+              <option value="right">Right</option>
+            </select>
           </div>
           <div class="option-row">
             <label class="option-label">Show time lines</label>
@@ -1537,7 +1559,7 @@ class AestheticHistoryGraphCardEditor extends LitElement {
           ${tlOn
             ? html`
                 <div class="option-row">
-                  <label class="option-label">Time line period (dd:hh:mm)</label>
+                  <label class="option-label">Time line interval (dd:hh:mm)</label>
                   <input
                     type="text"
                     class="input"
@@ -1591,30 +1613,6 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                 </div>
               `
             : nothing}
-          <div class="option-row">
-            <label class="option-label">Smoothing (0–10)</label>
-            <input
-              type="number"
-              class="input"
-              min="0"
-              max="10"
-              .value=${c.smoothing ?? 0}
-              @input=${(e) => this._valueChanged('smoothing', parseFloat(e.target.value) || 0)}
-            />
-          </div>
-          <div class="option-row">
-            <label class="option-label">Alignment</label>
-            <select
-              class="select"
-              .value=${c.alignment ?? 'left'}
-              @change=${(e) => this._valueChanged('alignment', e.target.value)}
-            >
-              <option value="left">Left</option>
-              <option value="center">Center</option>
-              <option value="right">Right</option>
-            </select>
-          </div>
-          <div class="option-help">Alignment applies to both title and legend</div>
         </div>
 
         <div class="section">
