@@ -12,6 +12,12 @@ import { html, css, LitElement, nothing } from 'https://cdn.jsdelivr.net/gh/lit/
 
 const DEFAULT_COLORS = ['#93B5F2', '#F6B38A', '#D6D6D6', '#FFE08A', '#A8C9F0', '#A6D68A'];
 
+/** Dev console prefix — opt-in tracing while the card is still stabilizing. */
+const HG_LOG = '[AestheticHistoryGraph]';
+function hgLog(...args) {
+  console.log(HG_LOG, ...args);
+}
+
 function isTemplate(v) {
   return typeof v === 'string' && v.includes('{{') && v.includes('}}');
 }
@@ -141,10 +147,22 @@ function zonedMidnightContaining(ms, timeZone) {
 
 /** Midnight-aligned tick times in [startMs, endMs] with periodMs step from successive midnights. */
 function buildMidnightAlignedTimeTicks(startMs, endMs, periodMs, timeZone) {
-  if (!periodMs || periodMs <= 0 || endMs <= startMs) return [];
+  if (!periodMs || periodMs <= 0 || endMs <= startMs || !Number.isFinite(periodMs)) return [];
+  const tBuild = performance.now();
   let t = zonedMidnightContaining(startMs, timeZone);
-  while (t < startMs - periodMs) t += periodMs;
-  while (t < startMs) t += periodMs;
+  let guard = 0;
+  const MAX_WHILE = 500000;
+  while (t < startMs - periodMs && guard++ < MAX_WHILE) t += periodMs;
+  if (guard >= MAX_WHILE) {
+    console.error(HG_LOG, 'time_lines: aborted aligning ticks (before window)', { periodMs, startMs, endMs });
+    return [];
+  }
+  guard = 0;
+  while (t < startMs && guard++ < MAX_WHILE) t += periodMs;
+  if (guard >= MAX_WHILE) {
+    console.error(HG_LOG, 'time_lines: aborted aligning ticks (into window)', { periodMs, startMs, endMs });
+    return [];
+  }
   const out = [];
   for (; t <= endMs + 1; t += periodMs) {
     if (t >= startMs && t <= endMs) {
@@ -152,6 +170,12 @@ function buildMidnightAlignedTimeTicks(startMs, endMs, periodMs, timeZone) {
       if (out.length >= MAX_TIME_GRID_LINES) break;
     }
   }
+  hgLog('time_lines ticks built', {
+    periodMs,
+    count: out.length,
+    capped: out.length >= MAX_TIME_GRID_LINES,
+    ms: Math.round(performance.now() - tBuild),
+  });
   return out;
 }
 
@@ -278,9 +302,12 @@ function smoothPointsToPathD(points, smooth10) {
 }
 
 function normalizeFillMode(raw) {
+  if (raw === true) return 'solid';
+  if (raw === false) return 'none';
   if (raw == null || raw === '') return 'none';
   const s = String(raw).trim().toLowerCase().replace(/ /g, '_');
-  if (s === 'none') return 'none';
+  if (s === 'true') return 'solid';
+  if (s === 'false' || s === 'none') return 'none';
   if (s === 'solid') return 'solid';
   if (['gradient_up', 'gradient_down', 'gradient_left', 'gradient_right'].includes(s)) return s;
   return 'none';
@@ -355,8 +382,11 @@ class AestheticHistoryGraphCard extends LitElement {
     this._chartWidth = 400;
     this._chartHeight = 200;
     this._resizeObserver = null;
+    this._resizeDebounceTimer = null;
     this._fetchTimer = null;
     this._chartRootEl = null;
+    this._lastHistoryFetchSig = '';
+    this._historyPollResumeAt = 0;
   }
 
   static getConfigElement() {
@@ -447,6 +477,8 @@ class AestheticHistoryGraphCard extends LitElement {
       } catch (_) {}
     }
     this._resizeObserver = null;
+    if (this._resizeDebounceTimer) clearTimeout(this._resizeDebounceTimer);
+    this._resizeDebounceTimer = null;
     if (this._fetchTimer) clearTimeout(this._fetchTimer);
     this._fetchTimer = null;
     super.disconnectedCallback();
@@ -466,10 +498,17 @@ class AestheticHistoryGraphCard extends LitElement {
       if (!cr) return;
       const w = Math.max(80, Math.floor(cr.width));
       const h = Math.max(60, Math.floor(cr.height));
-      if (w !== this._chartWidth || h !== this._chartHeight) {
-        this._chartWidth = w;
-        this._chartHeight = h;
-      }
+      if (this._resizeDebounceTimer) clearTimeout(this._resizeDebounceTimer);
+      this._resizeDebounceTimer = setTimeout(() => {
+        this._resizeDebounceTimer = null;
+        const dw = Math.abs(w - this._chartWidth);
+        const dh = Math.abs(h - this._chartHeight);
+        if (dw >= 2 || dh >= 2) {
+          hgLog('chart resize', { w, h });
+          this._chartWidth = w;
+          this._chartHeight = h;
+        }
+      }, 120);
     });
     this._resizeObserver.observe(el);
   }
@@ -550,6 +589,18 @@ class AestheticHistoryGraphCard extends LitElement {
     this._fetchTimer = setTimeout(() => this._fetchHistory(), 280);
   }
 
+  /** Stable key for throttling identical REST polls while `hass` updates frequently. */
+  _historyFetchSig() {
+    const cfg = this._config;
+    const hass = this.hass;
+    if (!cfg || !hass?.callApi) return '';
+    const rows = this._resolvedEntityRows();
+    return JSON.stringify({
+      ids: rows.map((r) => r._entityId).sort(),
+      tr: String(this._resolve('time_range') ?? ''),
+    });
+  }
+
   _resolvedEntityRows() {
     const cfg = this._config;
     const hass = this.hass;
@@ -579,15 +630,29 @@ class AestheticHistoryGraphCard extends LitElement {
 
     const durationMs = parseDdHhMmToMs(this._resolve('time_range') ?? '07:00:00');
     if (!durationMs) {
-      this._historyError = 'Invalid time_range';
-      this._historyByEntity = {};
+      const err = 'Invalid time_range';
+      if (this._historyError !== err || Object.keys(this._historyByEntity).length) {
+        this._historyError = err;
+        this._historyByEntity = {};
+        this.requestUpdate();
+      }
       return;
     }
 
     const rows = this._resolvedEntityRows();
     if (!rows.length) {
-      this._historyByEntity = {};
-      this._historyError = '';
+      if (Object.keys(this._historyByEntity).length || this._historyError) {
+        this._historyByEntity = {};
+        this._historyError = '';
+        this.requestUpdate();
+      }
+      return;
+    }
+
+    const sig = this._historyFetchSig();
+    const POLL_MS = 10000;
+    if (sig && sig === this._lastHistoryFetchSig && Date.now() < this._historyPollResumeAt) {
+      hgLog('history fetch skipped (poll throttle)');
       return;
     }
 
@@ -596,9 +661,11 @@ class AestheticHistoryGraphCard extends LitElement {
     const startIso = new Date(start).toISOString();
     const endIso = new Date(end).toISOString();
 
+    const prevJson = JSON.stringify(this._historyByEntity);
+    const prevErr = this._historyError;
+
     this._historyLoading = true;
     this._historyError = '';
-    this.requestUpdate();
 
     const next = {};
     try {
@@ -618,12 +685,23 @@ class AestheticHistoryGraphCard extends LitElement {
       );
       this._historyByEntity = next;
       this._historyError = '';
+      if (sig) {
+        this._lastHistoryFetchSig = sig;
+        this._historyPollResumeAt = Date.now() + POLL_MS;
+      }
     } catch (e) {
       this._historyError = e?.message || String(e);
       this._historyByEntity = {};
     } finally {
       this._historyLoading = false;
-      this.requestUpdate();
+      const newJson = JSON.stringify(this._historyByEntity);
+      if (newJson !== prevJson || this._historyError !== prevErr) {
+        hgLog('history applied', {
+          bytes: newJson.length,
+          err: this._historyError || null,
+        });
+        this.requestUpdate();
+      }
     }
   }
 
@@ -637,12 +715,13 @@ class AestheticHistoryGraphCard extends LitElement {
   }
 
   _valueDomain() {
+    const { tmin, tmax } = this._timeDomain();
     const rows = this._resolvedEntityRows();
     const hist = this._historyByEntity;
     let vmin = Infinity;
     let vmax = -Infinity;
     for (const row of rows) {
-      const pts = hist[row._entityId] || [];
+      const pts = (hist[row._entityId] || []).filter((p) => p.t >= tmin && p.t <= tmax);
       for (const p of pts) {
         vmin = Math.min(vmin, p.v);
         vmax = Math.max(vmax, p.v);
@@ -744,6 +823,7 @@ class AestheticHistoryGraphCard extends LitElement {
   }
 
   _renderLegend(rows, alignment) {
+    const { tmin, tmax } = this._timeDomain();
     const hist = this._historyByEntity;
     const justify =
       alignment === 'center' ? 'center' : alignment === 'right' ? 'flex-end' : 'flex-start';
@@ -754,8 +834,11 @@ class AestheticHistoryGraphCard extends LitElement {
       <div class="legend" style="justify-content:${justify}">
         ${rows.map((row, i) => {
           const id = row._entityId;
-          const pts = hist[id] || [];
-          const last = pts.length ? pts[pts.length - 1].v : null;
+          const ptsWin = (hist[id] || []).filter((p) => p.t >= tmin && p.t <= tmax);
+          let last = ptsWin.length ? ptsWin[ptsWin.length - 1].v : null;
+          if (last == null && this.hass?.states?.[id]) {
+            last = parseNumericState(this.hass.states[id].state);
+          }
           const name =
             this._resolve(`entities.${row._cfgIdx}.name`) ||
             this.hass?.states?.[id]?.attributes?.friendly_name ||
@@ -1045,7 +1128,6 @@ class AestheticHistoryGraphCard extends LitElement {
         <div class="chart-surface" style="min-height:200px">
           <svg width="100%" height="100%" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
             <defs>${defs}</defs>
-            <rect x="${margin.left}" y="${margin.top}" width="${innerW}" height="${innerH}" class="plot-bg" rx="4" />
             ${gridV}
             ${gridH}
             ${fillPaths}
@@ -1104,6 +1186,11 @@ class AestheticHistoryGraphCard extends LitElement {
       font-weight: 500;
       margin-bottom: 8px;
       color: var(--primary-text-color);
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      white-space: normal;
+      width: 100%;
+      box-sizing: border-box;
     }
     .top {
       margin-bottom: 12px;
@@ -1133,13 +1220,14 @@ class AestheticHistoryGraphCard extends LitElement {
       width: 100%;
       height: 100%;
     }
-    .plot-bg {
-      fill: rgba(var(--rgb-primary-text-color, 0, 0, 0), 0.04);
-    }
     .grid-line {
       stroke: var(--divider-color, rgba(127, 127, 127, 0.35));
       stroke-width: 1;
       stroke-dasharray: 3 3;
+      opacity: 0.85;
+    }
+    .line-path {
+      vector-effect: non-scaling-stroke;
     }
     .axis-text {
       fill: var(--secondary-text-color);
@@ -1692,10 +1780,14 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                         @input=${(e) => this._entityChanged(i, 'color', e.target.value.trim() || undefined)}
                       />
                     </div>
+                    <label class="entity-field-label" for="entity-line-width-${i}">Stroke width (px)</label>
                     <input
+                      id="entity-line-width-${i}"
                       type="number"
                       class="input narrow"
-                      placeholder="Line width (px)"
+                      min="0"
+                      step="0.5"
+                      placeholder=""
                       .value=${ent.line_width ?? ''}
                       @input=${(e) => {
                         const v = e.target.value;
@@ -1722,7 +1814,7 @@ class AestheticHistoryGraphCardEditor extends LitElement {
                       class="input narrow"
                       min="0"
                       max="100"
-                      placeholder="opacity"
+                      placeholder="Opacity"
                       .value=${ent.fill_opacity ?? ''}
                       @input=${(e) => {
                         const v = e.target.value;
@@ -1817,6 +1909,7 @@ class AestheticHistoryGraphCardEditor extends LitElement {
       font-weight: 600;
       color: var(--secondary-text-color);
       margin-bottom: 12px;
+      padding-left: 10px;
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
@@ -1828,9 +1921,13 @@ class AestheticHistoryGraphCardEditor extends LitElement {
       letter-spacing: 0.5px;
       margin-bottom: 8px;
       margin-top: 4px;
+      padding-left: 10px;
     }
     .option-row {
       margin-bottom: 16px;
+      padding-left: 10px;
+      padding-right: 6px;
+      box-sizing: border-box;
     }
     .option-row:last-of-type {
       margin-bottom: 0;
@@ -1843,6 +1940,9 @@ class AestheticHistoryGraphCardEditor extends LitElement {
     }
     .option-row-toggle {
       margin-bottom: 14px;
+      padding-left: 10px;
+      padding-right: 6px;
+      box-sizing: border-box;
     }
     .toggle-row {
       display: flex;
@@ -1898,7 +1998,10 @@ class AestheticHistoryGraphCardEditor extends LitElement {
       font-size: 12px;
       color: var(--secondary-text-color);
       margin-bottom: 12px;
+      padding-left: 10px;
+      padding-right: 6px;
       line-height: 1.4;
+      box-sizing: border-box;
     }
     .input,
     .select {
@@ -1954,6 +2057,8 @@ class AestheticHistoryGraphCardEditor extends LitElement {
       flex-direction: column;
       gap: 8px;
       min-width: 0;
+      padding-left: 10px;
+      box-sizing: border-box;
     }
     .entity-primary-row {
       display: flex;
@@ -1982,6 +2087,14 @@ class AestheticHistoryGraphCardEditor extends LitElement {
     .entity-options-row .entity-name-input {
       flex: 1;
       min-width: 100px;
+    }
+    .entity-field-label {
+      flex-shrink: 0;
+      font-size: 14px;
+      color: var(--primary-text-color);
+      white-space: nowrap;
+      align-self: center;
+      margin-right: 2px;
     }
     .color-with-swatch {
       display: flex;
