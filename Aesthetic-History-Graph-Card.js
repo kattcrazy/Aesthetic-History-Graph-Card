@@ -103,17 +103,35 @@ function resolveBool(raw, defaultVal) {
   return defaultVal;
 }
 
+/** Max vertical grid lines — avoids freezing the browser when the interval is tiny. */
+const MAX_TIME_GRID_LINES = 256;
+
+/** Limit horizontal grid segments — tiny `value_lines` step + huge domain could freeze the UI. */
+const MAX_VALUE_GRID_LINES = 192;
+
+/** Cached formatters — creating `Intl.DateTimeFormat` per call was dominating `time_lines` cost. */
+const _partsFmtByTz = new Map();
+
 function partsInTimeZone(ms, timeZone) {
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hour12: false,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  let fmt = _partsFmtByTz.get(timeZone);
+  if (fmt === undefined) {
+    try {
+      fmt = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        hour12: false,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+    } catch (_) {
+      fmt = null;
+    }
+    _partsFmtByTz.set(timeZone, fmt);
+  }
+  if (!fmt) return { y: 1970, m: 1, d: 1, h: 0, min: 0, s: 0 };
   const o = {};
   fmt.formatToParts(new Date(ms)).forEach((p) => {
     if (p.type !== 'literal') o[p.type] = +p.value;
@@ -121,23 +139,27 @@ function partsInTimeZone(ms, timeZone) {
   return { y: o.year, m: o.month, d: o.day, h: o.hour, min: o.minute, s: o.second };
 }
 
-/** Max vertical grid lines — avoids freezing the browser when the interval is tiny. */
-const MAX_TIME_GRID_LINES = 512;
-
-/** UTC ms for wall-clock y-m-d H:M:S in `timeZone` (IANA). Bounded scan (~few thousand Intl calls max). */
+/** UTC ms for wall-clock y-m-d H:M:S in `timeZone` (IANA). Minute stepping for S=0 (midnight ticks); bounded second scan otherwise. */
 function utcMsForZonedWallClock(timeZone, y, m, d, H, M, S = 0) {
   const anchor = Date.UTC(y, m - 1, d, 12, 0, 0);
   const spanMs = 40 * 60 * 60 * 1000;
-  const matchAtStep = (step) => {
-    for (let delta = -spanMs; delta <= spanMs; delta += step) {
+  if (S !== 0) {
+    const narrow = 90 * 60 * 1000;
+    for (let delta = -narrow; delta <= narrow; delta += 1000) {
       const g = (anchor + delta) >>> 0;
       const p = partsInTimeZone(g, timeZone);
       if (p.y === y && p.m === m && p.d === d && p.h === H && p.min === M && p.s === S) return g;
     }
-    return null;
-  };
-  if (S !== 0) return matchAtStep(1000) ?? anchor >>> 0;
-  return matchAtStep(60000) ?? matchAtStep(1000) ?? anchor >>> 0;
+    return anchor >>> 0;
+  }
+  const step = 60000;
+  const limit = Math.ceil((2 * spanMs) / step);
+  for (let i = 0; i <= limit; i += 1) {
+    const g = (anchor - spanMs + i * step) >>> 0;
+    const p = partsInTimeZone(g, timeZone);
+    if (p.y === y && p.m === m && p.d === d && p.h === H && p.min === M && p.s === S) return g;
+  }
+  return anchor >>> 0;
 }
 
 function zonedMidnightContaining(ms, timeZone) {
@@ -148,10 +170,9 @@ function zonedMidnightContaining(ms, timeZone) {
 /** Midnight-aligned tick times in [startMs, endMs] with periodMs step from successive midnights. */
 function buildMidnightAlignedTimeTicks(startMs, endMs, periodMs, timeZone) {
   if (!periodMs || periodMs <= 0 || endMs <= startMs || !Number.isFinite(periodMs)) return [];
-  const tBuild = performance.now();
   let t = zonedMidnightContaining(startMs, timeZone);
   let guard = 0;
-  const MAX_WHILE = 500000;
+  const MAX_WHILE = 300000;
   while (t < startMs - periodMs && guard++ < MAX_WHILE) t += periodMs;
   if (guard >= MAX_WHILE) {
     console.error(HG_LOG, 'time_lines: aborted aligning ticks (before window)', { periodMs, startMs, endMs });
@@ -170,12 +191,9 @@ function buildMidnightAlignedTimeTicks(startMs, endMs, periodMs, timeZone) {
       if (out.length >= MAX_TIME_GRID_LINES) break;
     }
   }
-  hgLog('time_lines ticks built', {
-    periodMs,
-    count: out.length,
-    capped: out.length >= MAX_TIME_GRID_LINES,
-    ms: Math.round(performance.now() - tBuild),
-  });
+  if (out.length >= MAX_TIME_GRID_LINES) {
+    hgLog('time_lines capped', { periodMs, max: MAX_TIME_GRID_LINES });
+  }
   return out;
 }
 
@@ -387,6 +405,10 @@ class AestheticHistoryGraphCard extends LitElement {
     this._chartRootEl = null;
     this._lastHistoryFetchSig = '';
     this._historyPollResumeAt = 0;
+    this._timeLinesSig = '';
+    this._timeLinesTicks = [];
+    this._axisFmtTz = '';
+    this._axisFmtTime = null;
   }
 
   static getConfigElement() {
@@ -880,9 +902,21 @@ class AestheticHistoryGraphCard extends LitElement {
     const tz = this.hass?.config?.time_zone || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     const timeLinesRaw = this._resolve('time_lines') ?? 'off';
-    const periodMs =
+    let periodMs =
       String(timeLinesRaw).toLowerCase().trim() === 'off' ? null : parseDdHhMmToMs(timeLinesRaw);
-    const timeTicks = periodMs ? buildMidnightAlignedTimeTicks(tmin, tmax, periodMs, tz) : [];
+
+    let timeTicks = [];
+    if (periodMs && tz) {
+      const sig = `${tz}\0${periodMs}\0${Math.floor(tmin / periodMs)}\0${Math.floor(tmax / periodMs)}`;
+      if (sig !== this._timeLinesSig) {
+        this._timeLinesSig = sig;
+        this._timeLinesTicks = buildMidnightAlignedTimeTicks(tmin, tmax, periodMs, tz);
+      }
+      timeTicks = this._timeLinesTicks;
+    } else {
+      this._timeLinesSig = '';
+      this._timeLinesTicks = [];
+    }
 
     const valueLinesRaw = this._resolve('value_lines') ?? 'off';
     const vInterval =
@@ -891,7 +925,10 @@ class AestheticHistoryGraphCard extends LitElement {
     if (vInterval && vInterval > 0 && Number.isFinite(vmin) && Number.isFinite(vmax)) {
       const k0 = Math.floor(vmin / vInterval);
       const k1 = Math.ceil(vmax / vInterval);
-      for (let k = k0; k <= k1; k += 1) valueTicks.push(k * vInterval);
+      for (let k = k0; k <= k1; k += 1) {
+        valueTicks.push(k * vInterval);
+        if (valueTicks.length >= MAX_VALUE_GRID_LINES) break;
+      }
     }
 
     const smoothing = clamp(parseFloat(this._resolve('smoothing') ?? 0) || 0, 0, 10);
@@ -899,21 +936,49 @@ class AestheticHistoryGraphCard extends LitElement {
     const xScale = (t) => margin.left + ((t - tmin) / (tmax - tmin)) * innerW;
     const yScale = (v) => margin.top + (1 - (v - vmin) / (vmax - vmin)) * innerH;
 
-    const fmtTime = new Intl.DateTimeFormat(undefined, {
-      timeZone: tz,
-      hour: 'numeric',
-      minute: '2-digit',
-    });
+    let fmtTime = this._axisFmtTime;
+    if (!fmtTime || this._axisFmtTz !== tz) {
+      try {
+        fmtTime = new Intl.DateTimeFormat(undefined, {
+          timeZone: tz,
+          hour: 'numeric',
+          minute: '2-digit',
+        });
+      } catch (_) {
+        fmtTime = new Intl.DateTimeFormat(undefined, {
+          hour: 'numeric',
+          minute: '2-digit',
+        });
+      }
+      this._axisFmtTz = tz;
+      this._axisFmtTime = fmtTime;
+    }
 
-    const gridV = timeTicks.map((tk) => {
-      const x = xScale(tk);
-      return html`<line class="grid-line" x1="${x}" y1="${margin.top}" x2="${x}" y2="${margin.top + innerH}" />`;
-    });
+    const gridVD =
+      timeTicks.length === 0
+        ? ''
+        : timeTicks
+            .map((tk) => {
+              const x = xScale(tk);
+              const y1 = margin.top;
+              const y2 = margin.top + innerH;
+              return `M${x.toFixed(2)},${y1.toFixed(2)}L${x.toFixed(2)},${y2.toFixed(2)}`;
+            })
+            .join('');
+    const gridV = gridVD ? html`<path class="grid-line" fill="none" d="${gridVD}" />` : nothing;
 
-    const gridH = valueTicks.map((vk) => {
-      const y = yScale(vk);
-      return html`<line class="grid-line" x1="${margin.left}" y1="${y}" x2="${margin.left + innerW}" y2="${y}" />`;
-    });
+    const gridHD =
+      valueTicks.length === 0
+        ? ''
+        : valueTicks
+            .map((vk) => {
+              const y = yScale(vk);
+              const x1 = margin.left;
+              const x2 = margin.left + innerW;
+              return `M${x1.toFixed(2)},${y.toFixed(2)}L${x2.toFixed(2)},${y.toFixed(2)}`;
+            })
+            .join('');
+    const gridH = gridHD ? html`<path class="grid-line" fill="none" d="${gridHD}" />` : nothing;
 
     const defs = [];
     const fillPaths = [];
@@ -1082,7 +1147,7 @@ class AestheticHistoryGraphCard extends LitElement {
           }
           if (c !== lastC && seg.length) {
             const d = smoothPointsToPathD(seg, smoothing);
-            linePaths.push(html`<path class="line-path" vector-effect="non-scaling-stroke" d="${d}" fill="none" stroke="${lastC}" stroke-width="${lineWidth}" stroke-linejoin="round" stroke-linecap="round" />`);
+            linePaths.push(html`<path class="line-path" d="${d}" fill="none" stroke="${lastC}" stroke-width="${lineWidth}" stroke-linejoin="round" stroke-linecap="round" />`);
             seg = [xy[i - 1], xy[i]];
             lastC = c;
           } else {
@@ -1091,13 +1156,12 @@ class AestheticHistoryGraphCard extends LitElement {
         }
         if (seg.length) {
           const d = smoothPointsToPathD(seg, smoothing);
-          linePaths.push(html`<path class="line-path" vector-effect="non-scaling-stroke" d="${d}" fill="none" stroke="${lastC}" stroke-width="${lineWidth}" stroke-linejoin="round" stroke-linecap="round" />`);
+          linePaths.push(html`<path class="line-path" d="${d}" fill="none" stroke="${lastC}" stroke-width="${lineWidth}" stroke-linejoin="round" stroke-linecap="round" />`);
         }
       } else {
         linePaths.push(html`
           <path
             class="line-path"
-            vector-effect="non-scaling-stroke"
             d="${dLine}"
             fill="none"
             stroke="${baseColor}"
@@ -1156,6 +1220,7 @@ class AestheticHistoryGraphCard extends LitElement {
       display: flex;
       flex-direction: column;
       min-height: 0;
+      min-width: 0;
       align-items: stretch;
     }
     .card-content:not(.empty) {
@@ -1166,6 +1231,7 @@ class AestheticHistoryGraphCard extends LitElement {
       flex-direction: column;
       flex: 1;
       min-height: 0;
+      min-width: 0;
       align-items: stretch;
       justify-content: center;
       width: 100%;
@@ -1196,6 +1262,7 @@ class AestheticHistoryGraphCard extends LitElement {
       margin-bottom: 12px;
       flex-shrink: 0;
       width: 100%;
+      min-width: 0;
     }
     .bottom {
       margin-top: 12px;
@@ -1205,6 +1272,7 @@ class AestheticHistoryGraphCard extends LitElement {
     .chart-wrap {
       flex: 1 1 auto;
       min-height: 0;
+      min-width: 0;
       width: 100%;
       display: flex;
       flex-direction: column;
@@ -1212,13 +1280,17 @@ class AestheticHistoryGraphCard extends LitElement {
     .chart-surface {
       flex: 1 1 auto;
       min-height: 160px;
+      min-width: 0;
       width: 100%;
       position: relative;
+      overflow: visible;
     }
     .chart-surface svg {
       display: block;
       width: 100%;
       height: 100%;
+      overflow: visible;
+      shape-rendering: geometricPrecision;
     }
     .grid-line {
       stroke: var(--divider-color, rgba(127, 127, 127, 0.35));
@@ -1227,7 +1299,8 @@ class AestheticHistoryGraphCard extends LitElement {
       opacity: 0.85;
     }
     .line-path {
-      vector-effect: non-scaling-stroke;
+      fill: none;
+      stroke-opacity: 1;
     }
     .axis-text {
       fill: var(--secondary-text-color);

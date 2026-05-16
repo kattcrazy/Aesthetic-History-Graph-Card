@@ -45,7 +45,7 @@ All options support Jinja templates (strings containing `{{ }}`).
 | `unit_source` | `automatic`, `custom` | `automatic` | Can be automatic or custom text |
 | `unit_custom` | string | - | When `unit_source` is `custom` |
 | `smoothing` | number | `0` | Path smoothing from `0` (straight segments) to `10` (strongest curve) |
-| `time_lines` | `off` or `dd:hh:mm` | `off` | Vertical time guides (for example `00:01:00` would mean a line every 1 hour). Max 512 lines drawn. |
+| `time_lines` | `off` or `dd:hh:mm` | `off` | Vertical time guides (for example `00:01:00` would mean a line every 1 hour). Max 256 lines drawn. |
 | `time_range` | string `dd:hh:mm` | `07:00:00` | History window |
 | `title` | string | - | Card title text |
 | `title_position` | `top`, `bottom` | `top` | Title placement |
