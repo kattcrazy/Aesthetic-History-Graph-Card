@@ -37,7 +37,7 @@ All options support Jinja templates (strings containing `{{ }}`).
 | `alignment` | `left`, `center`, `right` | `left` | Horizontal alignment for title and legend |
 | `entities` | array | `[]` | Entity list (see below) |
 | `legend_position` | `top`, `bottom` | `bottom` | Legend placement |
-| `legend_radius` | number | — | Radius of legend colour swatches (px); omit to match theme card radius (`--ha-card-border-radius`) |
+| `legend_radius` | number | — | Radius of legend colour swatches (px); omit to match theme card radius |
 | `show_legend` | boolean | `true` | Show legend |
 | `show_state` | boolean | `true` | Show the current numeric value in the legend |
 | `show_title` | boolean | `true` | Show title |
@@ -45,7 +45,7 @@ All options support Jinja templates (strings containing `{{ }}`).
 | `unit_source` | `automatic`, `custom` | `automatic` | Can be automatic or custom text |
 | `unit_custom` | string | - | When `unit_source` is `custom` |
 | `smoothing` | number | `0` | Path smoothing from `0` (straight segments) to `10` (strongest curve) |
-| `time_lines` | `off` or `dd:hh:mm` | `off` | Vertical time guides (for example `00:01:00` would mean a line every 1 hour ) |
+| `time_lines` | `off` or `dd:hh:mm` | `off` | Vertical time guides (for example `00:01:00` would mean a line every 1 hour). Max 512 lines drawn. |
 | `time_range` | string `dd:hh:mm` | `07:00:00` | History window |
 | `title` | string | - | Card title text |
 | `title_position` | `top`, `bottom` | `top` | Title placement |
@@ -67,7 +67,7 @@ All options support Jinja templates (strings containing `{{ }}`).
 
 ### Full config & options
 
-Reference listing of **every** card and entity key (valid YAML). Drop keys you do not need; defaults match the tables above.
+For your copy-paste convenience!
 
 ```yaml
 type: custom:aesthetic-history-graph-card

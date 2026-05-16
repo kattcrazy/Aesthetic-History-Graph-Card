@@ -115,19 +115,23 @@ function partsInTimeZone(ms, timeZone) {
   return { y: o.year, m: o.month, d: o.day, h: o.hour, min: o.minute, s: o.second };
 }
 
-/** UTC ms for wall-clock y-m-d H:M:S in timeZone (search around UTC noon that calendar day). */
+/** Max vertical grid lines — avoids freezing the browser when the interval is tiny. */
+const MAX_TIME_GRID_LINES = 512;
+
+/** UTC ms for wall-clock y-m-d H:M:S in `timeZone` (IANA). Bounded scan (~few thousand Intl calls max). */
 function utcMsForZonedWallClock(timeZone, y, m, d, H, M, S = 0) {
   const anchor = Date.UTC(y, m - 1, d, 12, 0, 0);
-  for (let dh = -30; dh <= 30; dh += 1) {
-    for (let dm = -120; dm <= 120; dm += 1) {
-      for (let ds = -120; ds <= 120; ds += 1) {
-        const g = anchor + (((dh * 60 + dm) * 60 + ds) * 1000) >>> 0;
-        const p = partsInTimeZone(g, timeZone);
-        if (p.y === y && p.m === m && p.d === d && p.h === H && p.min === M && p.s === S) return g;
-      }
+  const spanMs = 40 * 60 * 60 * 1000;
+  const matchAtStep = (step) => {
+    for (let delta = -spanMs; delta <= spanMs; delta += step) {
+      const g = (anchor + delta) >>> 0;
+      const p = partsInTimeZone(g, timeZone);
+      if (p.y === y && p.m === m && p.d === d && p.h === H && p.min === M && p.s === S) return g;
     }
-  }
-  return anchor;
+    return null;
+  };
+  if (S !== 0) return matchAtStep(1000) ?? anchor >>> 0;
+  return matchAtStep(60000) ?? matchAtStep(1000) ?? anchor >>> 0;
 }
 
 function zonedMidnightContaining(ms, timeZone) {
@@ -143,7 +147,10 @@ function buildMidnightAlignedTimeTicks(startMs, endMs, periodMs, timeZone) {
   while (t < startMs) t += periodMs;
   const out = [];
   for (; t <= endMs + 1; t += periodMs) {
-    if (t >= startMs && t <= endMs) out.push(t);
+    if (t >= startMs && t <= endMs) {
+      out.push(t);
+      if (out.length >= MAX_TIME_GRID_LINES) break;
+    }
   }
   return out;
 }
